@@ -1,0 +1,56 @@
+/* ==========================================================================
+   index.css
+   --------------------------------------------------------------------------
+   Global styles. Kept intentionally small -- almost everything is done with
+   Tailwind utility classes directly in components. What lives here is only
+   what CAN'T be a utility class: font-face application, scrollbar styling,
+   and the dark/light theme transition.
+   ========================================================================== */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    /* Smooth, deliberate theme switch when toggling dark/light mode --
+       one orchestrated transition rather than default instant flip. */
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply font-sans text-ink bg-canvas antialiased;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  /* Consistent, visible keyboard focus ring everywhere -- accessibility
+     floor mentioned in the design brief, never removed with outline:none
+     without replacing it. */
+  :focus-visible {
+    outline: 2px solid theme('colors.brass.DEFAULT');
+    outline-offset: 2px;
+  }
+
+  /* Slim, unobtrusive scrollbars that still match the palette */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: theme('colors.line.DEFAULT');
+    border-radius: 999px;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background-color: theme('colors.line-dark.DEFAULT');
+  }
+}
+
+@layer utilities {
+  /* Utility for the drag-and-drop "ghost" state on Kanban cards */
+  .dragging-ghost {
+    @apply opacity-40 scale-[0.98];
+  }
+}

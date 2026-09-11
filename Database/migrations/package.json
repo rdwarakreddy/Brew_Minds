@@ -1,0 +1,14 @@
+{
+  "name": "freelancer-db-migrations",
+  "version": "1.0.0",
+  "description": "Standalone migration runner for the Freelancer Platform Postgres database",
+  "main": "migrate.js",
+  "scripts": {
+    "migrate": "node migrate.js",
+    "migrate:baseline": "node migrate.js --baseline"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "pg": "^8.23.0"
+  }
+}

@@ -1,0 +1,52 @@
+# =========================================================================
+# Database/docker-compose.yml
+# -------------------------------------------------------------------------
+# PURPOSE
+#   Spins up a single PostgreSQL 16 container for local development. Uses
+#   environment variables from the centralized .env configuration file.
+#   Postgres automatically executes every .sql file in ./init (mounted to
+#   /docker-entrypoint-initdb.d), in alphabetical order, the very first
+#   time it starts with an empty data directory -- that's how the schema
+#   gets created on a brand new local setup.
+#
+# USAGE
+#   cd Database
+#   cp .env.example .env    # (first time only -- already done in this zip)
+#   docker compose up -d
+#   docker compose down     # stop it (keeps data)
+#   docker compose down -v  # stop it AND wipe all data (fresh start)
+# =========================================================================
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: brew_minds_postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - brew_minds_pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - brew_minds_network
+
+volumes:
+  brew_minds_pgdata:
+    name: brew_minds_pgdata
+
+networks:
+  brew_minds_network:
+    name: brew_minds_network
+    driver: bridge

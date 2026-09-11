@@ -1,0 +1,14 @@
+{
+  "name": "freelancer-platform-backend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Convenience scripts to install and run every microservice locally at once. Each service under this folder remains a fully independent Node app with its own package.json -- this root file does not make them a monorepo/workspace, it just saves typing during local development.",
+  "scripts": {
+    "install:all": "npm install --prefix apiGateway && npm install --prefix authService && npm install --prefix leadService && npm install --prefix clientService && npm install --prefix projectService && npm install --prefix paymentService && npm install --prefix meetingService && npm install --prefix taskService && npm install --prefix documentService && npm install --prefix invoiceService && npm install --prefix notificationService && npm install --prefix dashboardService && npm install --prefix ../Database/migrations",
+    "migrate": "npm install --prefix ../Database/migrations && node ../Database/migrations/migrate.js",
+    "dev": "npm run migrate && concurrently -n gateway,auth,lead,client,project,payment,meeting,task,document,invoice,notification,dashboard -c blue,green,yellow,magenta,cyan,white,gray,red,blue,green,yellow,magenta \"npm --prefix apiGateway run dev\" \"npm --prefix authService run dev\" \"npm --prefix leadService run dev\" \"npm --prefix clientService run dev\" \"npm --prefix projectService run dev\" \"npm --prefix paymentService run dev\" \"npm --prefix meetingService run dev\" \"npm --prefix taskService run dev\" \"npm --prefix documentService run dev\" \"npm --prefix invoiceService run dev\" \"npm --prefix notificationService run dev\" \"npm --prefix dashboardService run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
