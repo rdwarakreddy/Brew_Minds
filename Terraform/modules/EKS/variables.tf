@@ -1,130 +1,86 @@
-# =============================================================================
-# EKS Module Variables
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# Project
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# EKS MODULE - VARIABLES
+# ---------------------------------------------------------------------------
 
 variable "project_name" {
+  description = "Short name of the project, used to prefix resource names"
   type        = string
-  description = "Name of the project."
 }
 
 variable "environment" {
+  description = "Environment name, e.g. dev, staging, prod"
   type        = string
-  description = "Deployment environment."
 }
-
-# -----------------------------------------------------------------------------
-# EKS Cluster
-# -----------------------------------------------------------------------------
 
 variable "cluster_name" {
+  description = "Name of the EKS cluster"
   type        = string
-  description = "Name of the EKS cluster."
 }
 
-variable "eks_cluster_version" {
+variable "kubernetes_version" {
+  description = "Kubernetes version the EKS control plane runs"
   type        = string
-  description = "Kubernetes version for the EKS cluster."
+  default     = "1.31"
 }
 
-variable "eks_cluster_role_arn" {
+variable "vpc_id" {
+  description = "VPC ID the cluster and its nodes will run in (from the VPC module)"
   type        = string
-  description = "IAM role ARN used by the EKS control plane."
 }
-
-# -----------------------------------------------------------------------------
-# EKS Cluster IAM Dependencies
-# -----------------------------------------------------------------------------
-
-variable "eks_cluster_role_policy_attachments" {
-  type        = any
-  description = "IAM policy attachments required by the EKS cluster role."
-}
-
-# -----------------------------------------------------------------------------
-# Network
-# -----------------------------------------------------------------------------
 
 variable "private_subnet_ids" {
+  description = "Private subnet IDs the worker nodes will run in (from the VPC module), so nodes stay out of direct internet reach"
   type        = list(string)
-  description = "Private subnet IDs where EKS worker nodes are deployed."
 }
 
 variable "public_subnet_ids" {
+  description = "Public subnet IDs, needed so the EKS-managed ALB (created later by the Load Balancer Controller) can be internet-facing"
   type        = list(string)
-  description = "Public subnet IDs associated with the EKS cluster."
 }
 
-# -----------------------------------------------------------------------------
-# EKS Worker Nodes
-# -----------------------------------------------------------------------------
-
-variable "eks_node_role_arn" {
+variable "node_security_group_id" {
+  description = "Security group ID to attach to the worker nodes (from the VPC module)"
   type        = string
-  description = "IAM role ARN used by the EKS managed node group."
 }
 
-variable "eks_node_role_policy_attachments" {
-  type        = any
-  description = "IAM policy attachments required by the EKS node role."
-}
-
-variable "eks_node_instance_types" {
-  type        = list(string)
-  description = "EC2 instance types used by the EKS managed node group."
-
-  default = [
-    "t3.medium"
-  ]
-}
-
-variable "eks_node_disk_size" {
-  type        = number
-  description = "EBS root volume size in GB for EKS worker nodes."
-
-  default = 30
-}
-
-variable "eks_node_desired_size" {
-  type        = number
-  description = "Desired number of EKS worker nodes."
-
-  default = 2
-}
-
-variable "eks_node_min_size" {
-  type        = number
-  description = "Minimum number of EKS worker nodes."
-
-  default = 1
-}
-
-variable "eks_node_max_size" {
-  type        = number
-  description = "Maximum number of EKS worker nodes."
-
-  default = 3
-}
-
-# -----------------------------------------------------------------------------
-# CloudWatch
-# -----------------------------------------------------------------------------
-
-variable "cloudwatch_log_retention_days" {
-  type        = number
-  description = "Number of days to retain EKS control-plane logs in CloudWatch."
-
-  default = 30
-}
-
-# -----------------------------------------------------------------------------
-# GitHub Actions
-# -----------------------------------------------------------------------------
-
-variable "github_actions_role_arn" {
+variable "node_instance_type" {
+  description = "EC2 instance type used for the worker nodes"
   type        = string
-  description = "IAM role ARN used by GitHub Actions for deployment."
+  default     = "t3.medium"
+}
+
+variable "node_desired_count" {
+  description = "Desired number of worker nodes running day-to-day"
+  type        = number
+  default     = 2
+}
+
+variable "node_min_count" {
+  description = "Minimum number of worker nodes (the cluster will never scale below this)"
+  type        = number
+  default     = 2
+}
+
+variable "node_max_count" {
+  description = "Maximum number of worker nodes (the cluster will never scale above this)"
+  type        = number
+  default     = 4
+}
+
+variable "endpoint_public_access" {
+  description = "Whether the Kubernetes API endpoint can be reached from the public internet (useful for kubectl from a laptop). Kept true for a portfolio project so it's easy to manage; the WORKER NODES themselves still stay private regardless of this setting."
+  type        = bool
+  default     = true
+}
+
+variable "endpoint_private_access" {
+  description = "Whether the Kubernetes API endpoint can be reached from inside the VPC"
+  type        = bool
+  default     = true
+}
+
+variable "tags" {
+  description = "Common tags applied to EKS resources"
+  type        = map(string)
+  default     = {}
 }

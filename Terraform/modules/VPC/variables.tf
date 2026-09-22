@@ -1,92 +1,46 @@
+# ---------------------------------------------------------------------------
+# VPC MODULE - VARIABLES
+# These are the "settings" that whoever uses this module can change.
+# Nothing here is hard-coded, so this module can be reused for any project.
+# ---------------------------------------------------------------------------
+
 variable "project_name" {
-  description = "Project name used for VPC resource naming."
+  description = "Short name of the project, used to prefix resource names (e.g. brew-minds)"
   type        = string
 }
 
 variable "environment" {
-  description = "Deployment environment such as staging or production."
+  description = "Environment name, e.g. dev, staging, prod"
+  type        = string
+}
+
+variable "aws_region" {
+  description = "AWS region where the VPC and its resources will be created"
   type        = string
 }
 
 variable "vpc_cidr" {
-  description = "CIDR block for the VPC."
+  description = "The main IP address range for the whole VPC (e.g. 10.0.0.0/16)"
   type        = string
-
-  default = "10.0.0.0/16"
 }
 
 variable "availability_zones" {
-  description = "Availability zones used by the VPC."
+  description = "List of Availability Zones to spread subnets across (at least 2, for high availability)"
   type        = list(string)
-
-  default = [
-    "ap-south-1a",
-    "ap-south-1b"
-  ]
-
-  validation {
-    condition     = length(var.availability_zones) >= 2
-    error_message = "At least two availability zones are required."
-  }
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDR blocks for public subnets."
+  description = "List of IP ranges for the public subnets, one per Availability Zone"
   type        = list(string)
-
-  default = [
-    "10.0.1.0/24",
-    "10.0.2.0/24"
-  ]
-
-  validation {
-    condition = length(var.public_subnet_cidrs) == length(
-      var.availability_zones
-    )
-
-    error_message = "The number of public subnet CIDRs must match the number of availability zones."
-  }
 }
 
-variable "private_app_subnet_cidrs" {
-  description = "CIDR blocks for private application/EKS subnets."
+variable "private_subnet_cidrs" {
+  description = "List of IP ranges for the private subnets, one per Availability Zone"
   type        = list(string)
-
-  default = [
-    "10.0.11.0/24",
-    "10.0.12.0/24"
-  ]
-
-  validation {
-    condition = length(var.private_app_subnet_cidrs) == length(
-      var.availability_zones
-    )
-
-    error_message = "The number of private application subnet CIDRs must match the number of availability zones."
-  }
 }
 
-variable "private_db_subnet_cidrs" {
-  description = "CIDR blocks for private database subnets."
-  type        = list(string)
-
-  default = [
-    "10.0.21.0/24",
-    "10.0.22.0/24"
-  ]
-
-  validation {
-    condition = length(var.private_db_subnet_cidrs) == length(
-      var.availability_zones
-    )
-
-    error_message = "The number of private database subnet CIDRs must match the number of availability zones."
-  }
-}
-
-variable "single_nat_gateway" {
-  description = "Use one NAT Gateway for all private application subnets to reduce cost. Set false for one NAT Gateway per AZ."
-  type        = bool
-
-  default = true
+variable "tags" {
+  description = "Common tags applied to every resource in this module, so resources are easy to identify and group"
+  type        = map(string)
+  default     = {}
 }

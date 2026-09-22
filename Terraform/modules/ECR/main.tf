@@ -1,87 +1,88 @@
-# =============================================================================
-# ECR Module
-# =============================================================================
+# ---------------------------------------------------------------------------
+# ECR MODULE - MAIN
+#
+# In simple words: ECR is just a private "shelf" in AWS where we store our
+# Docker images (the packaged version of each microservice). Instead of
+# writing 13 almost-identical blocks of code by hand, one for every
+# service, we loop over the list of service names with for_each and stamp
+# out one repository per service automatically.
+# ---------------------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# ECR Repositories
-# Creates one repository for every backend service and the frontend.
-# -----------------------------------------------------------------------------
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
 
+  # Turn the list of service names into a set, which is what for_each needs
+  services = toset(var.service_names)
+}
+
+# -----------------------------------------------------------------------
+# ONE ECR REPOSITORY PER SERVICE
+# Each Brew Minds microservice (frontend, auth, leads, etc.) gets its own
+# repository. Keeping them separate makes it easy to manage permissions
+# and lifecycle rules per service later if needed.
+# -----------------------------------------------------------------------
 resource "aws_ecr_repository" "this" {
-  # "frontend" and "db-migration" are not in var.backend_services (that
-  # variable is specifically the 12 Node microservices, reused elsewhere
-  # for IAM/monitoring naming) but both need their own ECR repo too: the
-  # frontend nginx image, and the one-off migration image the CI/CD
-  # pipeline builds and the kubernetes/database/migration-job.yml Job
-  # runs. Adding both directly here (rather than stretching
-  # backend_services' meaning to cover non-microservices) keeps that
-  # variable's name accurate everywhere else it's used.
-  for_each = toset(concat(var.backend_services, ["frontend", "db-migration"]))
+  for_each = local.services
 
-  name                 = "${var.project_name}/${each.value}"
-  image_tag_mutability = "IMMUTABLE"
+  name                 = "${local.name_prefix}-${each.value}"
+  image_tag_mutability = var.image_tag_mutability
 
-  # Automatically scan images when they are pushed to ECR.
+  # Scan every image the moment it's pushed, so we find security issues early
   image_scanning_configuration {
-    scan_on_push = true
+    scan_on_push = var.scan_on_push
   }
 
-  # Encrypt ECR images at rest using AWS-managed AES256 encryption.
+  # Encrypt every image at rest using AWS's own managed key (simplest, no
+  # extra key management needed for a project this size)
   encryption_configuration {
     encryption_type = "AES256"
   }
 
-  tags = {
-    Name        = "${var.project_name}/${each.value}"
-    Project     = var.project_name
-    Environment = var.environment
-    ManagedBy   = "Terraform"
-  }
+  tags = merge(
+    var.tags,
+    {
+      Name    = "${local.name_prefix}-${each.value}"
+      Service = each.value
+    }
+  )
 }
 
-# -----------------------------------------------------------------------------
-# ECR Lifecycle Policies
-# -----------------------------------------------------------------------------
-# Cost optimization:
-# - Untagged images expire after 7 days.
-# - Keep only the latest 15 staging/prod/SHA images.
-# -----------------------------------------------------------------------------
-
+# -----------------------------------------------------------------------
+# LIFECYCLE POLICY PER REPOSITORY
+# Without this, old Docker images would pile up forever and cost money.
+# This policy does two things for every repository:
+#   1. Deletes "untagged" images (leftovers from old builds) after a few days
+#   2. Keeps only the most recent N tagged images, removing anything older
+# -----------------------------------------------------------------------
 resource "aws_ecr_lifecycle_policy" "this" {
-  for_each = aws_ecr_repository.this
+  for_each = local.services
 
-  repository = each.value.name
+  repository = aws_ecr_repository.this[each.value].name
 
   policy = jsonencode({
     rules = [
       {
         rulePriority = 1
-
-        description = "Expire untagged images after 7 days"
-
+        description  = "Remove untagged images after ${var.untagged_image_expiry_days} days"
         selection = {
           tagStatus   = "untagged"
           countType   = "sinceImagePushed"
           countUnit   = "days"
-          countNumber = 7
+          countNumber = var.untagged_image_expiry_days
         }
-
         action = {
           type = "expire"
         }
       },
       {
         rulePriority = 2
-
-        description = "Keep only the most recent 15 tagged images"
-
+        description  = "Keep only the last ${var.tagged_image_count_to_keep} tagged images"
         selection = {
           tagStatus     = "tagged"
-          tagPrefixList = ["staging-", "prod-", "sha-"]
+          tagPrefixList = ["v", "latest", "main", "prod"]
           countType     = "imageCountMoreThan"
-          countNumber   = 15
+          countNumber   = var.tagged_image_count_to_keep
         }
-
         action = {
           type = "expire"
         }

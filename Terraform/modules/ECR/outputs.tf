@@ -1,39 +1,18 @@
-# =============================================================================
-# ECR Module Outputs
-# =============================================================================
-
-# -----------------------------------------------------------------------------
-# ECR Repository URLs
-# -----------------------------------------------------------------------------
-
-output "repository_urls" {
-  description = "Map of service names to their ECR repository URLs."
-  value = {
-    for service, repository in aws_ecr_repository.this :
-    service => repository.repository_url
-  }
-}
-
-# -----------------------------------------------------------------------------
-# ECR Repository ARNs
-# -----------------------------------------------------------------------------
-
-output "repository_arns" {
-  description = "Map of service names to their ECR repository ARNs."
-  value = {
-    for service, repository in aws_ecr_repository.this :
-    service => repository.arn
-  }
-}
-
-# -----------------------------------------------------------------------------
-# ECR Repository Names
-# -----------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# ECR MODULE - OUTPUTS
+# ---------------------------------------------------------------------------
 
 output "repository_names" {
-  description = "Map of service names to their ECR repository names."
-  value = {
-    for service, repository in aws_ecr_repository.this :
-    service => repository.name
-  }
+  description = "Map of service name -> ECR repository name"
+  value       = { for k, v in aws_ecr_repository.this : k => v.name }
+}
+
+output "repository_urls" {
+  description = "Map of service name -> full ECR repository URL (used to docker push/pull images)"
+  value       = { for k, v in aws_ecr_repository.this : k => v.repository_url }
+}
+
+output "repository_arns" {
+  description = "Map of service name -> ECR repository ARN"
+  value       = { for k, v in aws_ecr_repository.this : k => v.arn }
 }

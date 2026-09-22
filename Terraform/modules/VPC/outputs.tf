@@ -1,74 +1,60 @@
-# =============================================================================
-# VPC Module Outputs
-# =============================================================================
-# NOTE: This file was missing from the original module, which is one of the
-# "dependency errors" — every downstream module (Security Groups, EKS, RDS)
-# references module.vpc.* attributes, so without these declared outputs
-# `terraform validate` fails with "Unsupported attribute" errors.
-# =============================================================================
+# ---------------------------------------------------------------------------
+# VPC MODULE - OUTPUTS
+# These values are handed back to the root module so other modules
+# (EKS, RDS, Edge/Security) can plug into this same network.
+# ---------------------------------------------------------------------------
 
 output "vpc_id" {
-  description = "ID of the VPC."
-  value       = aws_vpc.this.id
+  description = "ID of the VPC"
+  value       = aws_vpc.main.id
 }
 
-output "vpc_cidr_block" {
-  description = "CIDR block of the VPC."
-  value       = aws_vpc.this.cidr_block
+output "vpc_cidr" {
+  description = "CIDR block of the VPC"
+  value       = aws_vpc.main.cidr_block
 }
-
-# -----------------------------------------------------------------------------
-# Public Subnets
-# -----------------------------------------------------------------------------
 
 output "public_subnet_ids" {
-  description = "IDs of the public subnets (used for the ALB)."
+  description = "IDs of the public subnets (one per Availability Zone)"
   value       = aws_subnet.public[*].id
 }
 
-# -----------------------------------------------------------------------------
-# Private Application Subnets
-# -----------------------------------------------------------------------------
-
-output "private_app_subnet_ids" {
-  description = "IDs of the private application subnets (used for EKS worker nodes)."
-  value       = aws_subnet.private_app[*].id
+output "private_subnet_ids" {
+  description = "IDs of the private subnets (one per Availability Zone)"
+  value       = aws_subnet.private[*].id
 }
 
-# -----------------------------------------------------------------------------
-# Private Database Subnets
-# -----------------------------------------------------------------------------
-
-output "private_db_subnet_ids" {
-  description = "IDs of the private database subnets (used for the RDS subnet group)."
-  value       = aws_subnet.private_db[*].id
+output "availability_zones" {
+  description = "Availability Zones actually used by this VPC"
+  value       = var.availability_zones
 }
 
-# -----------------------------------------------------------------------------
-# Routing / NAT
-# -----------------------------------------------------------------------------
+output "public_route_table_ids" {
+  description = "ID of the public route table"
+  value       = [aws_route_table.public.id]
+}
+
+output "private_route_table_ids" {
+  description = "IDs of the private route tables (one per Availability Zone)"
+  value       = aws_route_table.private[*].id
+}
 
 output "nat_gateway_ids" {
-  description = "IDs of the NAT Gateway(s)."
-  value       = aws_nat_gateway.this[*].id
+  description = "IDs of the NAT Gateways (one per Availability Zone)"
+  value       = aws_nat_gateway.main[*].id
 }
 
-output "internet_gateway_id" {
-  description = "ID of the Internet Gateway."
-  value       = aws_internet_gateway.this.id
+output "alb_security_group_id" {
+  description = "ID of the security group used by the Application Load Balancer"
+  value       = aws_security_group.alb.id
 }
 
-output "public_route_table_id" {
-  description = "ID of the public route table."
-  value       = aws_route_table.public.id
+output "eks_nodes_security_group_id" {
+  description = "ID of the security group used by the EKS worker nodes"
+  value       = aws_security_group.eks_nodes.id
 }
 
-output "private_app_route_table_ids" {
-  description = "IDs of the private application route table(s)."
-  value       = aws_route_table.private_app[*].id
-}
-
-output "private_db_route_table_id" {
-  description = "ID of the private database route table."
-  value       = aws_route_table.private_db.id
+output "database_security_group_id" {
+  description = "ID of the security group used by the RDS database"
+  value       = aws_security_group.database.id
 }

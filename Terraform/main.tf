@@ -1,281 +1,154 @@
-# =========================================================
-# VPC
-# =========================================================
+# ---------------------------------------------------------------------------
+# ROOT MAIN
+#
+# In simple words: this file is the "assembly line". It doesn't create
+# any AWS resources directly - it just calls each module in the right
+# order and passes the right outputs from one module as inputs into the
+# next, so everything gets wired together correctly. The real dependency
+# chain is:
+#
+#   VPC  -->  EKS, RDS, Edge/Security   (all three need the network first)
+#   RDS  -->  Secrets                    (secret needs the real DB endpoint)
+#   EKS  -->  Edge/Security              (ALB tagging references the cluster)
+#
+# We rely on Terraform automatically detecting these dependencies through
+# the module.xxx.output references below - no manual depends_on needed.
+# ---------------------------------------------------------------------------
 
+locals {
+  common_tags = {
+    Project     = "Brew-Minds"
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+}
+
+# =========================================================================
+# 1. VPC - the network everything else lives inside
+# =========================================================================
 module "vpc" {
-  source = "./modules/VPC"
+  source = "./modules/vpc"
 
-  project_name = var.project_name
-  environment  = var.environment
-
-  vpc_cidr                 = var.vpc_cidr
-  availability_zones       = var.availability_zones
-  public_subnet_cidrs      = var.public_subnet_cidrs
-  private_app_subnet_cidrs = var.private_app_subnet_cidrs
-  private_db_subnet_cidrs  = var.private_db_subnet_cidrs
-
-  single_nat_gateway = var.single_nat_gateway
+  project_name         = var.project_name
+  environment          = var.environment
+  aws_region           = var.aws_region
+  vpc_cidr             = var.vpc_cidr
+  availability_zones   = var.availability_zones
+  public_subnet_cidrs  = var.public_subnet_cidrs
+  private_subnet_cidrs = var.private_subnet_cidrs
+  tags                 = local.common_tags
 }
 
-
-# =========================================================
-# SECURITY GROUPS
-# =========================================================
-
-module "security_groups" {
-  source = "./modules/Security_Groups"
-
-  project_name = var.project_name
-  environment  = var.environment
-  vpc_id       = module.vpc.vpc_id
-  cluster_name = var.cluster_name
-
-  depends_on = [
-    module.vpc
-  ]
-}
-
-
-# =========================================================
-# ECR
-# =========================================================
-
+# =========================================================================
+# 2. ECR - one Docker image repository per Brew Minds service
+#    Independent of the network, so it can be created in parallel.
+# =========================================================================
 module "ecr" {
-  source = "./modules/ECR"
-
-  project_name     = var.project_name
-  environment      = var.environment
-  backend_services = var.backend_services
-}
-
-
-# =========================================================
-# IAM (base roles only — no EKS dependency)
-# =========================================================
-#
-# FIXED: the original wiring had module.iam consuming
-# module.eks.cluster_arn / oidc_provider_arn / oidc_issuer_url
-# while module.eks itself consumes module.iam.eks_cluster_role_arn /
-# eks_node_role_arn. That is a genuine Terraform module cycle
-# (module.iam -> module.eks -> module.iam) and `terraform validate`
-# / `plan` fails with "Cycle" the moment both modules reference
-# each other's outputs.
-#
-# Fix: this IAM module only creates the cluster role, node role, and
-# GitHub Actions role — none of which need anything from EKS. The
-# EKS-OIDC-dependent application IRSA role now lives in its own
-# `module.irsa`, created AFTER module.eks and module.secrets below.
-# =========================================================
-
-module "iam" {
-  source = "./modules/IAM"
+  source = "./modules/ecr"
 
   project_name = var.project_name
   environment  = var.environment
-  cluster_name = var.cluster_name
-  aws_region   = var.aws_region
-
-  # ECR repositories are created independently.
-  ecr_repository_arns = values(module.ecr.repository_arns)
-
-  github_org  = var.github_org
-  github_repo = var.github_repo
-
-  depends_on = [
-    module.ecr
-  ]
+  tags         = local.common_tags
 }
 
-
-# =========================================================
-# EKS
-# =========================================================
-
+# =========================================================================
+# 3. EKS - the Kubernetes cluster that runs all backend services
+#    Needs the VPC's private/public subnets and node security group.
+# =========================================================================
 module "eks" {
-  source = "./modules/EKS"
+  source = "./modules/eks"
+
+  project_name           = var.project_name
+  environment            = var.environment
+  cluster_name           = var.eks_cluster_name
+  kubernetes_version     = var.eks_version
+  vpc_id                 = module.vpc.vpc_id
+  private_subnet_ids     = module.vpc.private_subnet_ids
+  public_subnet_ids      = module.vpc.public_subnet_ids
+  node_security_group_id = module.vpc.eks_nodes_security_group_id
+  node_instance_type     = var.eks_node_instance_type
+  node_desired_count     = var.eks_desired_nodes
+  node_min_count         = var.eks_min_nodes
+  node_max_count         = var.eks_max_nodes
+  tags                   = local.common_tags
+}
+
+# =========================================================================
+# 4. DATABASE - PostgreSQL RDS instance
+#    Needs the VPC's private subnets and database security group.
+# =========================================================================
+module "database" {
+  source = "./modules/database"
+
+  project_name          = var.project_name
+  environment           = var.environment
+  engine_version        = var.rds_engine_version
+  instance_class        = var.rds_instance_class
+  allocated_storage     = var.rds_allocated_storage
+  database_name         = var.rds_database_name
+  database_username     = var.rds_username
+  database_password     = var.rds_password
+  backup_retention_days = var.rds_backup_retention_days
+  multi_az              = var.rds_multi_az
+  private_subnet_ids    = module.vpc.private_subnet_ids
+  security_group_id     = module.vpc.database_security_group_id
+  tags                  = local.common_tags
+}
+
+# =========================================================================
+# 5. STORAGE - S3 bucket for application documents
+#    Independent of the network, so it can be created in parallel.
+# =========================================================================
+module "storage" {
+  source = "./modules/storage"
 
   project_name = var.project_name
   environment  = var.environment
-
-  cluster_name        = var.cluster_name
-  eks_cluster_version = var.eks_cluster_version
-
-  private_subnet_ids = module.vpc.private_app_subnet_ids
-  public_subnet_ids  = module.vpc.public_subnet_ids
-
-  eks_cluster_role_arn = module.iam.eks_cluster_role_arn
-  eks_node_role_arn    = module.iam.eks_node_role_arn
-
-  # IAM policy attachments required by the EKS module
-  eks_cluster_role_policy_attachments = module.iam.eks_cluster_role_policy_attachments
-  eks_node_role_policy_attachments    = module.iam.eks_node_role_policy_attachments
-
-  eks_node_instance_types = var.eks_node_instance_types
-  eks_node_disk_size      = var.eks_node_disk_size
-
-  eks_node_desired_size = var.eks_node_desired_size
-  eks_node_min_size     = var.eks_node_min_size
-  eks_node_max_size     = var.eks_node_max_size
-
-  github_actions_role_arn = module.iam.github_actions_role_arn
-
-  depends_on = [
-    module.vpc,
-    module.security_groups,
-    module.iam
-  ]
+  bucket_name  = var.s3_bucket_name
+  tags         = local.common_tags
 }
 
-
-# =========================================================
-# RDS
-# =========================================================
-
-module "rds" {
-  source = "./modules/RDS"
-
-  project_name = var.project_name
-  environment  = var.environment
-
-  private_db_subnet_ids = module.vpc.private_db_subnet_ids
-
-  rds_security_group_id = module.security_groups.rds_security_group_id
-
-  db_engine_version        = var.db_engine_version
-  db_instance_class        = var.db_instance_class
-  db_allocated_storage     = var.db_allocated_storage
-  db_max_allocated_storage = var.db_max_allocated_storage
-
-  db_name     = var.db_name
-  db_username = var.db_username
-
-  db_multi_az                = var.db_multi_az
-  db_deletion_protection     = var.db_deletion_protection
-  db_backup_retention_period = var.db_backup_retention_period
-
-  depends_on = [
-    module.vpc,
-    module.security_groups
-  ]
-}
-
-
-# =========================================================
-# SECRETS MANAGER
-# =========================================================
-
+# =========================================================================
+# 6. SECRETS - AWS Secrets Manager entries
+#    Uses the REAL database endpoint from the database module output,
+#    rather than a fake/placeholder host, so the secret is immediately
+#    usable by the application once created.
+# =========================================================================
 module "secrets" {
-  source = "./modules/Secrets"
+  source = "./modules/secrets"
 
-  project_name = var.project_name
-  environment  = var.environment
-
-  db_host     = module.rds.db_instance_address
-  db_port     = module.rds.db_instance_port
-  db_name     = module.rds.db_name
-  db_username = module.rds.db_username
-  db_password = module.rds.db_master_password
-
-  depends_on = [
-    module.rds
-  ]
+  project_name               = var.project_name
+  environment                = var.environment
+  db_username                = var.rds_username
+  db_password                = var.rds_password
+  db_name                    = var.rds_database_name
+  db_host                    = module.database.rds_address
+  db_port                    = module.database.rds_port
+  jwt_secret                 = var.jwt_secret
+  google_oauth_client_id     = var.google_oauth_client_id
+  google_oauth_client_secret = var.google_oauth_client_secret
+  tags                       = local.common_tags
 }
 
+# =========================================================================
+# 7. EDGE-SECURITY - CloudFront + WAF + ALB, the public entry point
+#    Needs the VPC's public subnets/ALB security group, and references
+#    the real EKS cluster name so the target group is traceable back to
+#    the cluster it serves.
+# =========================================================================
+module "edge_security" {
+  source = "./modules/Edge_Security"
 
-# =========================================================
-# ALB / AWS LOAD BALANCER CONTROLLER
-# =========================================================
-#
-# This module installs the AWS Load Balancer Controller.
-#
-# It does NOT create the final application ALB itself.
-# The ALB will be created by Kubernetes Ingress after the
-# application is deployed.
-# =========================================================
+  providers = {
+    aws           = aws
+    aws.us_east_1 = aws.us_east_1
+  }
 
-module "alb" {
-  source = "./modules/ALB"
-
-  aws_region  = var.aws_region
-  environment = var.environment
-
-  cluster_name = module.eks.cluster_name
-  vpc_id       = module.vpc.vpc_id
-
-  oidc_provider_arn = module.eks.oidc_provider_arn
-  oidc_issuer_url   = module.eks.oidc_issuer_url
-
-  depends_on = [
-    module.eks
-  ]
-}
-
-
-# =========================================================
-# IRSA — Application ServiceAccount Role
-# =========================================================
-#
-# Created AFTER EKS (needs its OIDC provider) and Secrets
-# (needs the secret ARN to scope access to). This is the
-# piece that used to live inside module.iam and caused the
-# module cycle described above.
-# =========================================================
-
-module "irsa" {
-  source = "./modules/IRSA"
-
-  project_name = var.project_name
-  environment  = var.environment
-  cluster_name = var.cluster_name
-
-  eks_oidc_provider_arn = module.eks.oidc_provider_arn
-  eks_oidc_issuer_url   = module.eks.oidc_issuer_url
-
-  application_secret_arns = [
-    module.secrets.db_credentials_secret_arn
-  ]
-
-  depends_on = [
-    module.eks,
-    module.secrets
-  ]
-}
-
-
-# =========================================================
-# MONITORING
-# =========================================================
-#
-# Monitoring receives:
-# - EKS cluster information
-# - RDS information
-# - CloudWatch log information
-#
-# ALB-specific metrics will be connected once the
-# Kubernetes Ingress creates the actual ALB.
-# =========================================================
-
-module "monitoring" {
-  source = "./modules/Monitoring"
-
-  project_name = var.project_name
-  environment  = var.environment
-  aws_region   = var.aws_region
-
-  cluster_name = module.eks.cluster_name
-
-  rds_instance_identifier = module.rds.db_instance_id
-
-  cloudwatch_log_retention_days = var.cloudwatch_log_retention_days
-
-  # This should be supplied after the AWS Load Balancer
-  # Controller creates the actual ALB.
-  #
-  # Keep empty for the initial infrastructure deployment.
-  alb_name = ""
-
-  depends_on = [
-    module.eks,
-    module.rds
-  ]
+  project_name          = var.project_name
+  environment           = var.environment
+  vpc_id                = module.vpc.vpc_id
+  public_subnet_ids     = module.vpc.public_subnet_ids
+  alb_security_group_id = module.vpc.alb_security_group_id
+  eks_cluster_name      = module.eks.cluster_name
+  tags                  = local.common_tags
 }

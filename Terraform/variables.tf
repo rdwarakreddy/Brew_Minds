@@ -1,240 +1,171 @@
-variable "aws_region" {
-  description = "AWS region where Brew Minds infrastructure will be deployed."
-  type        = string
-  default     = "ap-south-1"
-}
+# ---------------------------------------------------------------------------
+# ROOT VARIABLES
+# All the "dials" for this deployment live here. Change these (usually
+# via a terraform.tfvars file you do NOT commit to git) instead of
+# editing any module code.
+# ---------------------------------------------------------------------------
+
+# --- General ---
 
 variable "project_name" {
-  description = "Project name used for AWS resources."
+  description = "Short project name, used to prefix almost every resource name"
   type        = string
   default     = "brew-minds"
 }
 
 variable "environment" {
-  description = "Deployment environment."
+  description = "Environment name, e.g. dev, staging, prod"
   type        = string
-  default     = "production"
-
-  validation {
-    condition     = contains(["dev", "staging", "production"], var.environment)
-    error_message = "Environment must be dev, staging, or production."
-  }
+  default     = "dev"
 }
 
-# ---------------------------------------------------------
-# VPC
-# ---------------------------------------------------------
+variable "aws_region" {
+  description = "AWS region to deploy Brew Minds into"
+  type        = string
+  default     = "ap-south-1"
+}
+
+# --- VPC ---
 
 variable "vpc_cidr" {
-  description = "CIDR block for the VPC."
+  description = "IP address range for the whole VPC"
   type        = string
   default     = "10.0.0.0/16"
 }
 
 variable "availability_zones" {
-  description = "Availability zones used by the infrastructure."
+  description = "Availability Zones to spread the infrastructure across"
   type        = list(string)
-
-  default = [
-    "ap-south-1a",
-    "ap-south-1b"
-  ]
-
-  validation {
-    condition     = length(var.availability_zones) >= 2
-    error_message = "At least two availability zones are required."
-  }
+  default     = ["ap-south-1a", "ap-south-1b"]
 }
 
 variable "public_subnet_cidrs" {
-  description = "CIDRs for public subnets."
+  description = "IP ranges for the public subnets, one per Availability Zone"
   type        = list(string)
-
-  default = [
-    "10.0.1.0/24",
-    "10.0.2.0/24"
-  ]
+  default     = ["10.0.0.0/24", "10.0.1.0/24"]
 }
 
-variable "private_app_subnet_cidrs" {
-  description = "CIDRs for private application subnets."
+variable "private_subnet_cidrs" {
+  description = "IP ranges for the private subnets, one per Availability Zone"
   type        = list(string)
-
-  default = [
-    "10.0.11.0/24",
-    "10.0.12.0/24"
-  ]
+  default     = ["10.0.10.0/24", "10.0.11.0/24"]
 }
 
-variable "private_db_subnet_cidrs" {
-  description = "CIDRs for private database subnets."
-  type        = list(string)
+# --- EKS ---
 
-  default = [
-    "10.0.21.0/24",
-    "10.0.22.0/24"
-  ]
-}
-
-variable "single_nat_gateway" {
-  description = "Use a single NAT Gateway to reduce cost."
-  type        = bool
-  default     = true
-}
-
-# ---------------------------------------------------------
-# EKS
-# ---------------------------------------------------------
-
-variable "cluster_name" {
-  description = "EKS cluster name."
+variable "eks_cluster_name" {
+  description = "Name of the EKS cluster"
   type        = string
-  default     = "brew-minds-cluster"
+  default     = "brew-minds-eks"
 }
 
-variable "eks_cluster_version" {
-  description = "Kubernetes version for EKS."
+variable "eks_version" {
+  description = "Kubernetes version for the EKS control plane"
   type        = string
-  default     = "1.33"
+  default     = "1.31"
 }
 
-variable "eks_node_instance_types" {
-  description = "EC2 instance types for EKS managed node group."
-  type        = list(string)
-
-  default = [
-    "t3.medium"
-  ]
+variable "eks_node_instance_type" {
+  description = "EC2 instance type for EKS worker nodes"
+  type        = string
+  default     = "t3.medium"
 }
 
-variable "eks_node_disk_size" {
-  description = "EKS node disk size in GB."
-  type        = number
-  default     = 30
-}
-
-variable "eks_node_desired_size" {
-  description = "Desired number of EKS nodes."
+variable "eks_desired_nodes" {
+  description = "Desired number of EKS worker nodes"
   type        = number
   default     = 2
 }
 
-variable "eks_node_min_size" {
-  description = "Minimum number of EKS nodes."
+variable "eks_min_nodes" {
+  description = "Minimum number of EKS worker nodes"
   type        = number
-  default     = 1
+  default     = 2
 }
 
-variable "eks_node_max_size" {
-  description = "Maximum number of EKS nodes."
+variable "eks_max_nodes" {
+  description = "Maximum number of EKS worker nodes"
   type        = number
-  default     = 3
+  default     = 4
 }
 
-# ---------------------------------------------------------
-# ECR
-# ---------------------------------------------------------
+# --- RDS ---
 
-variable "backend_services" {
-  description = "Brew Minds backend microservices."
-  type        = list(string)
-
-  default = [
-    "apiGateway",
-    "authService",
-    "leadService",
-    "clientService",
-    "projectService",
-    "paymentService",
-    "meetingService",
-    "taskService",
-    "documentService",
-    "invoiceService",
-    "notificationService",
-    "dashboardService"
-  ]
-}
-
-# ---------------------------------------------------------
-# RDS
-# ---------------------------------------------------------
-
-variable "db_engine_version" {
-  description = "PostgreSQL engine version."
+variable "rds_engine_version" {
+  description = "PostgreSQL engine version"
   type        = string
   default     = "16.4"
 }
 
-variable "db_instance_class" {
-  description = "RDS instance class."
+variable "rds_instance_class" {
+  description = "RDS instance size/type"
   type        = string
   default     = "db.t3.micro"
 }
 
-variable "db_allocated_storage" {
-  description = "Initial RDS storage in GB."
+variable "rds_allocated_storage" {
+  description = "RDS disk size in GB"
   type        = number
   default     = 20
 }
 
-variable "db_max_allocated_storage" {
-  description = "Maximum RDS autoscaling storage in GB."
-  type        = number
-  default     = 100
-}
-
-variable "db_name" {
-  description = "PostgreSQL database name."
+variable "rds_database_name" {
+  description = "Name of the initial Postgres database"
   type        = string
-  default     = "brewminds"
+  default     = "brew_minds_db"
 }
 
-variable "db_username" {
-  description = "PostgreSQL master username."
+variable "rds_username" {
+  description = "Master username for the RDS database"
   type        = string
-  default     = "brewminds_admin"
+  default     = "brew_minds"
+  sensitive   = true
 }
 
-variable "db_multi_az" {
-  description = "Enable RDS Multi-AZ."
-  type        = bool
-  default     = false
+variable "rds_password" {
+  description = "Master password for the RDS database. Provide this via a terraform.tfvars file that is NOT committed to git, or via the TF_VAR_rds_password environment variable. Never hard-code it here."
+  type        = string
+  sensitive   = true
 }
 
-variable "db_deletion_protection" {
-  description = "Enable RDS deletion protection."
-  type        = bool
-  default     = true
-}
-
-variable "db_backup_retention_period" {
-  description = "RDS backup retention period."
+variable "rds_backup_retention_days" {
+  description = "Number of days RDS keeps automated backups"
   type        = number
   default     = 7
 }
 
-# ---------------------------------------------------------
-# Monitoring
-# ---------------------------------------------------------
-
-variable "cloudwatch_log_retention_days" {
-  description = "CloudWatch log retention period."
-  type        = number
-  default     = 30
+variable "rds_multi_az" {
+  description = "Whether RDS runs a standby replica in a second Availability Zone"
+  type        = bool
+  default     = false
 }
 
-# ---------------------------------------------------------
-# GitHub Actions
-# ---------------------------------------------------------
+# --- Storage ---
 
-variable "github_org" {
-  description = "GitHub organization or username."
+variable "s3_bucket_name" {
+  description = "Base name for the S3 bucket used for Brew Minds documents (must be globally unique once prefixed)"
   type        = string
-  default     = "rdwarakreddy"
+  default     = "documents"
 }
 
-variable "github_repo" {
-  description = "GitHub repository name."
+# --- Secrets ---
+
+variable "jwt_secret" {
+  description = "Secret key used by the Auth Service to sign JWT tokens. Provide via tfvars/environment variable, never hard-code."
   type        = string
-  default     = "Brew_Minds"
+  sensitive   = true
+}
+
+variable "google_oauth_client_id" {
+  description = "Google OAuth client ID used for Google login on the Auth Service"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "google_oauth_client_secret" {
+  description = "Google OAuth client secret used for Google login on the Auth Service"
+  type        = string
+  default     = ""
+  sensitive   = true
 }
