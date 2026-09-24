@@ -1,0 +1,150 @@
+# =============================================================================
+# FRONTEND DEPLOYMENT
+# =============================================================================
+# What is a Deployment?
+#   A Deployment tells Kubernetes "keep N copies of this container
+#   running, always". If a copy (a "Pod") crashes, or the server it was
+#   running on dies, Kubernetes automatically starts a new one to
+#   replace it - you never have to manually restart anything.
+#
+# What is a Pod?
+#   A Pod is the smallest thing Kubernetes runs - basically "one running
+#   copy of your container(s)". A Deployment manages a set of Pods for
+#   you.
+#
+# What is a "Replica"?
+#   A Replica is just one running copy (one Pod) of this application.
+#
+# NOTES ON THIS SPECIFIC SERVICE (frontend):
+#   - This is the Nginx container built from Frontend/dockerfile. It
+#     serves the already-built React app as static files and, per its
+#     own nginx.conf, also proxies "/api/" requests to the api-gateway
+#     Service internally. At the Ingress level (see ../ingress.yml) we
+#     route "/api/*" straight to api-gateway instead, so this
+#     container's own /api/ proxy_pass block is simply never reached
+#     from outside the cluster - harmless, just unused.
+#   - No environment variables are set here on purpose: VITE_API_BASE_URL
+#     and VITE_GOOGLE_CLIENT_ID are baked into the static JS files at
+#     DOCKER BUILD time (see the Dockerfile's ARG/ENV lines), not read
+#     at container start time, so there is nothing for Kubernetes to
+#     inject at runtime.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: brew-minds
+  labels:
+    app: frontend
+spec:
+  # Run two copies of this application.
+  # If one copy stops working, the other copy can continue serving
+  # users while Kubernetes replaces the broken one - visitors never see
+  # a total outage.
+  replicas: 2
+
+  # Tells the Deployment which Pods belong to it (must match the Pod
+  # template's labels below).
+  selector:
+    matchLabels:
+      app: frontend
+
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          # kustomization.yml rewrites this to the real ECR image URL -
+          # see the `images:` section there.
+          image: brew-minds/frontend:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 80 # matches `EXPOSE 80` in Frontend/dockerfile
+
+          # --- Resource requests/limits ---------------------------------
+          # "requests" = what Kubernetes reserves for this container when
+          #   deciding which server (node) to place it on. Guarantees the
+          #   container always has at least this much available.
+          # "limits" = the maximum this container is ever allowed to use.
+          #   If it tries to use more memory than its limit, Kubernetes
+          #   restarts it (protects the rest of the cluster from one
+          #   misbehaving container).
+          # Nginx serving static files is very lightweight, so these are
+          # deliberately small - a sensible starting point for a
+          # portfolio/demo environment, not a high-traffic production site.
+          resources:
+            requests:
+              cpu: 50m # 0.05 of one CPU core
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+
+          # --- Readiness probe --------------------------------------------
+          # Question Kubernetes keeps asking: "Can this Pod receive
+          # traffic RIGHT NOW?" If this check fails, Kubernetes stops
+          # sending it requests (via the Service) until it passes again,
+          # but does NOT restart the container - it might just be busy
+          # starting up.
+          readinessProbe:
+            httpGet:
+              path: / # the frontend Dockerfile's own HEALTHCHECK also checks "/"
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # --- Liveness probe -----------------------------------------------
+          # Question Kubernetes keeps asking: "Is this Pod still working,
+          # or is it stuck/frozen and should be restarted?" Unlike the
+          # readiness probe, failing this one causes Kubernetes to KILL
+          # and restart the container.
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          # --- Security context (container-level) -------------------------
+          # The Dockerfile already creates and switches to a non-root
+          # "nginx" user (USER nginx), so these settings just make that
+          # explicit to Kubernetes too and lock things down further:
+          #   - allowPrivilegeEscalation: false -> this process can never
+          #     gain more permissions than it started with.
+          #   - readOnlyRootFilesystem: true -> the container's own
+          #     filesystem can't be modified/tampered with at runtime.
+          #     Nginx still needs a couple of small writable folders for
+          #     its cache/pid files, which we provide below as separate,
+          #     temporary (emptyDir) volumes instead.
+          #   - capabilities.drop: ["ALL"] -> removes every Linux
+          #     kernel-level privilege this container doesn't need.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
+            - name: tmp
+              mountPath: /tmp
+
+      # "emptyDir" volumes are temporary, per-Pod scratch space - created
+      # empty when the Pod starts and deleted when the Pod is removed.
+      # They exist only so nginx has somewhere writable to put its
+      # cache/pid files, even though the rest of the container's
+      # filesystem is locked read-only above.
+      volumes:
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

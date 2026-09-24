@@ -1,0 +1,40 @@
+# =============================================================================
+# FRONTEND SERVICE
+# =============================================================================
+# What is a Service?
+#   Pods come and go (restarts, deployments, scaling) and each one gets
+#   a new internal IP address every time. A Service gives a group of
+#   Pods ONE stable name and address that never changes, and
+#   automatically load-balances traffic across whichever Pods are
+#   currently healthy. Other things in the cluster (or an Ingress)
+#   connect to the Service, never to a Pod directly.
+#
+# Why does the frontend NOT get its own public IP here?
+#   It's tempting to think the frontend, being what users see, should
+#   be exposed directly to the internet. But in this architecture the
+#   single public entry point is the ALB / Ingress (see ../ingress.yml),
+#   which already sits behind CloudFront and WAF. Giving the frontend
+#   Service its own public IP/LoadBalancer as well would create a
+#   second, unprotected way to reach the app that bypasses CloudFront
+#   and WAF entirely - defeating the purpose of having them. So this
+#   Service type is "ClusterIP": reachable only from INSIDE the
+#   cluster. The Ingress is the only thing that forwards real internet
+#   traffic to it.
+#
+# How does this let other things reach the frontend?
+#   The Ingress (../ingress.yml) sends any request that isn't "/api/*"
+#   to this Service by name ("frontend") on port 80, and this Service
+#   forwards it on to whichever frontend Pod is healthy right now.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: brew-minds
+spec:
+  type: ClusterIP # internal-only; the Ingress is the public entry point
+  selector:
+    app: frontend # sends traffic to any Pod with this label (see deployment.yml)
+  ports:
+    - port: 80 # the port other things inside the cluster use to reach this Service
+      targetPort: 80 # the actual container port to forward to (matches containerPort)

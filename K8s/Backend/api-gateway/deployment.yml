@@ -1,0 +1,118 @@
+# =============================================================================
+# API-GATEWAY DEPLOYMENT
+# =============================================================================
+# The single entrypoint the frontend calls. Proxies /api/<x> requests
+#   to the matching backend service below (see apiGateway/server.js's routeTable).
+#
+# For a full explanation of what a Deployment/Pod/Replica/probe/
+# resources block is, see ../../frontend/deployment.yml - the same
+# concepts apply here, just for a backend Node.js service instead of
+# the Nginx frontend.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment #A Deployment is responsible for running and maintaining Pod
+metadata:
+  name: api-gateway
+  namespace: brew-minds
+  labels: #Label says This resource belongs to api-gateway.
+    app: api-gateway
+spec:
+  # Run two copies for basic availability: if one Pod is busy or
+  # restarting, the other keeps serving requests.
+  replicas: 2
+  selector: #This connects the Deployment to the Pods it manages
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+        - name: api-gateway
+          # kustomization.yml rewrites this to the real ECR image URL.
+          image: brew-minds/api-gateway:latest
+          imagePullPolicy: IfNotPresent #If the node already has this image, use the existing image. Otherwise, download it from the container registry.
+
+          ports:
+            - containerPort: 5000 # matches `EXPOSE 5000` in Backend/apiGateway/dockerfile
+
+          env:
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: NODE_ENV
+            - name: PORT
+              value: "5000"
+            - name: CORS_ORIGIN #This gives your Node.js application the frontend origin it should allow.
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: CORS_ORIGIN
+            # --- Downstream service URLs (service discovery) -------------
+            # See configmap.yml - each of these is "http://<k8s-service-name>:<port>".
+            - name: AUTH_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: AUTH_SERVICE_URL}}
+            - name: LEAD_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: LEAD_SERVICE_URL}}
+            - name: CLIENT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: CLIENT_SERVICE_URL}}
+            - name: PROJECT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: PROJECT_SERVICE_URL}}
+            - name: PAYMENT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: PAYMENT_SERVICE_URL}}
+            - name: MEETING_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: MEETING_SERVICE_URL}}
+            - name: TASK_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: TASK_SERVICE_URL}}
+            - name: DOCUMENT_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: DOCUMENT_SERVICE_URL}}
+            - name: INVOICE_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: INVOICE_SERVICE_URL}}
+            - name: NOTIFICATION_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: NOTIFICATION_SERVICE_URL}}
+            - name: DASHBOARD_SERVICE_URL
+              valueFrom: {configMapKeyRef: {name: brew-minds-config, key: DASHBOARD_SERVICE_URL}}
+
+          # See ../../frontend/deployment.yml for what requests/limits mean.
+          # Backend services get a bit more than the static frontend since
+          # they run real application logic and talk to Postgres.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+
+          # "Can this Pod receive traffic right now?"
+          #Kubernetes calls It calls: http://<pod-ip>:5000/health
+          #If it returns successfully, Kubernetes considers the Pod ready.
+          readinessProbe:
+            httpGet:
+              path: /health # every service exposes this - see server.js
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # "Is this Pod still working, or should Kubernetes restart it?"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          # Dockerfile already runs this service as a non-root "node"
+          # user - see ../../frontend/deployment.yml for what each of
+          # these settings does.
+          securityContext:
+            runAsNonRoot: true #Don't run the application as the Linux root user
+            allowPrivilegeEscalation: false #Don't allow the process to gain additional privileges.
+            readOnlyRootFilesystem: true #The container's main filesystem should not be writable
+            capabilities:
+              drop: ["ALL"]
+            #Linux capabilities give processes additional privileges.
+            #You're saying:The API Gateway doesn't need those extra privileges, so remove them.
+

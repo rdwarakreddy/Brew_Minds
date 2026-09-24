@@ -1,0 +1,132 @@
+# =============================================================================
+# TASKS DEPLOYMENT
+# =============================================================================
+# Manages tasks/to-dos.
+#
+# For a full explanation of what a Deployment/Pod/Replica/probe/
+# resources block is, see ../../frontend/deployment.yml - the same
+# concepts apply here, just for a backend Node.js service instead of
+# the Nginx frontend.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tasks
+  namespace: brew-minds
+  labels:
+    app: tasks
+spec:
+  # Run two copies for basic availability: if one Pod is busy or
+  # restarting, the other keeps serving requests.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: tasks
+  template:
+    metadata:
+      labels:
+        app: tasks
+    spec:
+      containers:
+        - name: tasks
+          # kustomization.yml rewrites this to the real ECR image URL.
+          image: brew-minds/tasks:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 5007 # matches `EXPOSE 5007` in Backend/taskService/dockerfile
+
+          env:
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: NODE_ENV
+            - name: PORT
+              value: "5007"
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: CORS_ORIGIN
+            # --- Database connection (from the shared DB credentials Secret) ---
+            # See secrets.yml: these 5 values are bundled together because
+            # they all come from the SAME AWS Secrets Manager entry
+            # (Terraform's db-credentials secret).
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_NAME
+            - name: DB_POOL_MAX
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: DB_POOL_MAX
+            # --- JWT verification secret ---------------------------------
+            # Every service that sits behind a login wall needs this to
+            # verify the access token a logged-in user sends with each
+            # request (see shared authMiddleware.js).
+            - name: JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-jwt-secret
+                  key: JWT_ACCESS_SECRET
+
+          # See ../../frontend/deployment.yml for what requests/limits mean.
+          # Backend services get a bit more than the static frontend since
+          # they run real application logic and talk to Postgres.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+
+          # "Can this Pod receive traffic right now?"
+          readinessProbe:
+            httpGet:
+              path: /health # every service exposes this - see server.js
+              port: 5007
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # "Is this Pod still working, or should Kubernetes restart it?"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5007
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          # Dockerfile already runs this service as a non-root "node"
+          # user - see ../../frontend/deployment.yml for what each of
+          # these settings does.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+

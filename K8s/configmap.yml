@@ -1,0 +1,114 @@
+# =============================================================================
+# CONFIGMAP
+# =============================================================================
+# What is a ConfigMap?
+#   A ConfigMap is a place to store configuration values (plain text,
+#   not passwords) that your application reads as environment variables.
+#   Keeping config OUTSIDE the container image means you can change a
+#   setting (like a service URL) without rebuilding/re-pushing a new
+#   Docker image.
+#
+# Why these specific values?
+#   Every single key below was found by actually reading the Brew Minds
+#   backend source code (server.js, db.js, tokens.js, upload.js,
+#   reminderScanner.js) - nothing here is guessed. Each key includes a
+#   comment saying exactly which service(s) read it and where in the
+#   code it's used.
+#
+# What is NOT in here?
+#   Passwords, the JWT signing secret, and the Google OAuth client ID
+#   live in secrets.yml instead, even though GOOGLE_CLIENT_ID isn't a
+#   "password" - it's still an external credential, so it's treated as
+#   sensitive and kept out of this file.
+# =============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: brew-minds-config
+  namespace: brew-minds
+data:
+  # ---------------------------------------------------------------------
+  # USED BY: every backend service (api-gateway + all 11 services)
+  # ---------------------------------------------------------------------
+
+  # Tells Express to run in production mode (disables the verbose
+  # morgan request logger, per every server.js: `if (NODE_ENV !== 'production')`).
+  NODE_ENV: "production"
+
+  # Only requests from this origin are allowed to call the API with
+  # credentials (see the `cors({ origin: CORS_ORIGIN, ... })` line that
+  # appears in every service's server.js).
+  #
+  # IMPORTANT: this MUST be updated after Terraform creates the
+  # CloudFront distribution. Terraform's `cloudfront_domain_name`
+  # output gives you the real value, e.g.:
+  #   https://d1234abcd.cloudfront.net
+  # This is a genuinely required manual step - Kubernetes has no way to
+  # know the CloudFront domain name Terraform will generate ahead of time.
+  CORS_ORIGIN: "https://REPLACE_WITH_CLOUDFRONT_DOMAIN_NAME"
+
+  # ---------------------------------------------------------------------
+  # USED BY: every service that talks to the database (every backend
+  # service EXCEPT api-gateway, which has no database of its own)
+  # ---------------------------------------------------------------------
+
+  # Caps how many simultaneous DB connections ONE pod is allowed to
+  # open (see db.js: `max: Number(process.env.DB_POOL_MAX) || 10`).
+  # This is a tuning value, not a secret, so it's fine here even though
+  # its 4 siblings (host/port/user/password/dbname) live in secrets.yml.
+  DB_POOL_MAX: "10"
+
+  # ---------------------------------------------------------------------
+  # USED BY: api-gateway ONLY
+  # ---------------------------------------------------------------------
+  # This is the heart of service discovery. The API Gateway proxies
+  # every "/api/<x>" request to the matching backend service using
+  # these URLs (see apiGateway/server.js's `routeTable`). Each URL
+  # uses the Kubernetes Service name for that backend (see each
+  # backend/<service>/service.yml) - Kubernetes' built-in DNS resolves
+  # a Service name like "auth" to that Service's internal cluster IP
+  # automatically, so we never hard-code a real IP address here.
+  AUTH_SERVICE_URL: "http://auth:5001"
+  LEAD_SERVICE_URL: "http://leads:5002"
+  CLIENT_SERVICE_URL: "http://clients:5003"
+  PROJECT_SERVICE_URL: "http://projects:5004"
+  PAYMENT_SERVICE_URL: "http://payments:5005"
+  MEETING_SERVICE_URL: "http://meetings:5006"
+  TASK_SERVICE_URL: "http://tasks:5007"
+  DOCUMENT_SERVICE_URL: "http://documents:5008"
+  INVOICE_SERVICE_URL: "http://invoices:5009"
+  NOTIFICATION_SERVICE_URL: "http://notifications:5010"
+  DASHBOARD_SERVICE_URL: "http://dashboard:5011"
+
+  # ---------------------------------------------------------------------
+  # USED BY: auth ONLY
+  # ---------------------------------------------------------------------
+  # How long an access token / refresh token stays valid before it
+  # expires (see authService/src/utils/tokens.js). Not sensitive - only
+  # the SIGNING SECRETS (in secrets.yml) need to be kept private.
+  JWT_ACCESS_EXPIRES_IN: "15m"
+  JWT_REFRESH_EXPIRES_IN: "30d"
+
+  # ---------------------------------------------------------------------
+  # USED BY: documents ONLY
+  # ---------------------------------------------------------------------
+  # Where uploaded files are written inside the container (see
+  # documentService/src/utils/upload.js). This path is also where we
+  # mount the PersistentVolumeClaim in backend/documents/deployment.yml
+  # - see the comment there for why documentService needs a volume at
+  # all (short answer: the application saves files to local disk, not
+  # S3, even though Terraform provisions an S3 bucket).
+  UPLOAD_DIR: "/app/uploads"
+
+  # Largest file (in MB) a user is allowed to upload (see upload.js).
+  MAX_FILE_SIZE_MB: "15"
+
+  # ---------------------------------------------------------------------
+  # USED BY: notifications ONLY
+  # ---------------------------------------------------------------------
+  # Cron schedule controlling how often the reminder/follow-up scanner
+  # runs (see notificationService/src/jobs/reminderScanner.js). The
+  # default "* * * * *" means "every minute". This is exactly why the
+  # notifications Deployment is intentionally kept at 1 replica - see
+  # the comment in backend/notifications/deployment.yml.
+  REMINDER_SCAN_CRON: "* * * * *"

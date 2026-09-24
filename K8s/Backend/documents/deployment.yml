@@ -1,0 +1,165 @@
+# =============================================================================
+# DOCUMENTS DEPLOYMENT
+# =============================================================================
+# Manages uploaded files and document links.
+#
+# For a full explanation of what a Deployment/Pod/Replica/probe/
+# resources block is, see ../../frontend/deployment.yml - the same
+# concepts apply here, just for a backend Node.js service instead of
+# the Nginx frontend.
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: documents
+  namespace: brew-minds
+  labels:
+    app: documents
+spec:
+  # Deliberately kept at just ONE replica. Read carefully:
+  # this application saves uploaded files to LOCAL DISK
+  # (see documentService/src/utils/upload.js), not to the S3
+  # bucket Terraform provisions - there is no AWS SDK/S3 code
+  # anywhere in this service as written today. A Kubernetes
+  # PersistentVolumeClaim (pvc.yml, mounted below) gives this
+  # Pod a real, durable EBS disk so uploaded files survive Pod
+  # restarts. But that EBS volume can only be attached to ONE
+  # Pod at a time (ReadWriteOnce), so running more than 1
+  # replica here isn't possible without first changing the
+  # application to upload to S3 instead. Flagging this rather
+  # than silently working around it.
+  replicas: 1
+  selector:
+    matchLabels:
+      app: documents
+  template:
+    metadata:
+      labels:
+        app: documents
+    spec:
+      containers:
+        - name: documents
+          # kustomization.yml rewrites this to the real ECR image URL.
+          image: brew-minds/documents:latest
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 5008 # matches `EXPOSE 5008` in Backend/documentService/dockerfile
+
+          env:
+            - name: NODE_ENV
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: NODE_ENV
+            - name: PORT
+              value: "5008"
+            - name: CORS_ORIGIN
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: CORS_ORIGIN
+            # --- Database connection (from the shared DB credentials Secret) ---
+            # See secrets.yml: these 5 values are bundled together because
+            # they all come from the SAME AWS Secrets Manager entry
+            # (Terraform's db-credentials secret).
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_HOST
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_PORT
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_USER
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_PASSWORD
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-db-credentials
+                  key: DB_NAME
+            - name: DB_POOL_MAX
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: DB_POOL_MAX
+            # --- JWT verification secret ---------------------------------
+            # Every service that sits behind a login wall needs this to
+            # verify the access token a logged-in user sends with each
+            # request (see shared authMiddleware.js).
+            - name: JWT_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: brew-minds-jwt-secret
+                  key: JWT_ACCESS_SECRET
+            - name: UPLOAD_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: UPLOAD_DIR
+            - name: MAX_FILE_SIZE_MB
+              valueFrom:
+                configMapKeyRef:
+                  name: brew-minds-config
+                  key: MAX_FILE_SIZE_MB
+
+          # See ../../frontend/deployment.yml for what requests/limits mean.
+          # Backend services get a bit more than the static frontend since
+          # they run real application logic and talk to Postgres.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+
+          # "Can this Pod receive traffic right now?"
+          readinessProbe:
+            httpGet:
+              path: /health # every service exposes this - see server.js
+              port: 5008
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+          # "Is this Pod still working, or should Kubernetes restart it?"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5008
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          # Dockerfile already runs this service as a non-root "node"
+          # user - see ../../frontend/deployment.yml for what each of
+          # these settings does.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            - name: uploads
+              mountPath: /app/uploads # matches UPLOAD_DIR above
+
+      # A real, durable EBS-backed disk (provisioned via the EBS CSI
+      # driver Terraform's EKS module already installed) so uploaded
+      # files survive Pod restarts. See pvc.yml for the claim itself,
+      # and the replica-count comment above for why this only works
+      # with exactly 1 replica.
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: documents-uploads

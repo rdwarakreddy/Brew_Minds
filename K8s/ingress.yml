@@ -1,0 +1,100 @@
+# =============================================================================
+# INGRESS / EXTERNAL TRAFFIC ENTRY POINT
+# =============================================================================
+# What is an Ingress normally?
+#   Usually, "Ingress" is a Kubernetes object that says "expose these
+#   Services to the internet, and route by path/host". When you create
+#   a plain Ingress and the AWS Load Balancer Controller is watching the
+#   cluster, the controller's normal behaviour is to PROVISION A BRAND
+#   NEW ALB for that Ingress and wire it up.
+#
+# WHY THIS FILE DOES **NOT** CONTAIN A PLAIN "kind: Ingress"
+#   The project brief is explicit: "Do NOT create another ALB manually
+#   if Terraform already provisions the required ALB integration." A
+#   normal Ingress would do exactly that - create a SECOND, unwanted
+#   ALB sitting next to the one Terraform's edge-security module
+#   already built (CloudFront -> WAF -> ALB -> target group).
+#
+#   The AWS Load Balancer Controller ships a different, purpose-built
+#   object for this exact situation - attaching Kubernetes Pods to an
+#   ALB TARGET GROUP THAT ALREADY EXISTS - called a
+#   "TargetGroupBinding". It creates ZERO new AWS load balancer
+#   resources; it only tells AWS "please register these Pods' IP
+#   addresses into this already-existing target group". That's exactly
+#   what we want here, so that's what this file uses instead.
+#
+# WHY BINDING JUST THE "frontend" SERVICE IS ENOUGH FOR THE WHOLE APP
+#   You might expect two bindings - one for "/" to the frontend, one
+#   for "/api/*" to api-gateway - matching the diagram in the project
+#   brief. But inspecting Frontend/nginx.conf shows the frontend's own
+#   Nginx container ALREADY does exactly that split internally:
+#
+#     location /api/ {
+#         proxy_pass http://api-gateway:5000/api/;
+#     }
+#     location / {
+#         try_files $uri $uri/ /index.html;
+#     }
+#
+#   So every request - whether "/" or "/api/whatever" - can be sent to
+#   the SAME frontend Pods, and Nginx forwards the "/api/*" ones on to
+#   the api-gateway Service using Kubernetes' own internal DNS, using
+#   the exact hostname ("api-gateway") that Kubernetes Service (see
+#   ../backend/api-gateway/service.yml) already provides. This preserves
+#   the existing VITE_API_BASE_URL=/api architecture with no application
+#   code changes, and means ONE TargetGroupBinding is enough for the
+#   entire app. Net traffic path:
+#
+#     Internet -> CloudFront -> WAF -> ALB (Terraform)
+#       -> target group (Terraform) -> frontend Pods (this binding)
+#          -> (for /api/*) -> api-gateway Service -> backend Pods
+#
+# ⚠ TWO THINGS TO VERIFY / FILL IN BEFORE THIS WORKS - FLAGGING RATHER
+#   THAN GUESSING:
+#
+#   1. targetGroupARN below is a PLACEHOLDER. After `terraform apply`,
+#      copy the real value from the `module.edge_security.alb_target_group_arn`
+#      output (also surfaced at the root as part of the deployment) and
+#      replace it here, or patch it via Kustomize.
+#
+#   2. Terraform's edge-security module target group was created with a
+#      `target_port` variable that DEFAULTS TO 5000 (the api-gateway
+#      port), because at the time that Terraform was written, the exact
+#      Kubernetes-level decision to route everything through the
+#      frontend's Nginx proxy (as explained above) hadn't been made
+#      yet. For target registration/health checks to work correctly
+#      with THIS binding (to the frontend Service on port 80), that
+#      Terraform variable should be changed to 80 before applying, or
+#      the target group updated to match. This is a genuine
+#      cross-file follow-up, not something this Kubernetes-only task
+#      can fix by itself.
+#
+# PREREQUISITE (not a YAML file, an operational step): the AWS Load
+# Balancer Controller itself must be installed in the cluster (e.g. via
+# Helm) before this object has any effect. It uses the IAM role
+# Terraform's eks module already created for it
+# (module.eks.lb_controller_role_arn) - installing the controller is a
+# one-time cluster setup step, not part of this application's
+# Kubernetes configuration.
+# =============================================================================
+apiVersion: elbv2.k8s.aws/v1beta1
+kind: TargetGroupBinding
+metadata:
+  name: frontend-alb-binding
+  namespace: brew-minds
+spec:
+  # REPLACE with the real ARN from Terraform's
+  # `module.edge_security.alb_target_group_arn` output.
+  targetGroupARN: "REPLACE_WITH_TERRAFORM_ALB_TARGET_GROUP_ARN"
+
+  # Matches the frontend Service (see ../frontend/service.yml), port 80.
+  serviceRef:
+    name: frontend
+    port: 80
+
+  # Matches Terraform's target group, which was created with
+  # target_type = "ip" (registers individual Pod IPs directly, the
+  # standard mode for EKS + the AWS Load Balancer Controller).
+  targetType: ip
+
+

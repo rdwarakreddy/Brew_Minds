@@ -1,0 +1,138 @@
+# =============================================================================
+# KUSTOMIZATION
+# =============================================================================
+# What does Kustomize do?
+#   Kustomize is a tool built into kubectl itself (`kubectl apply -k`).
+#   This file is its "table of contents": it lists every YAML file that
+#   makes up the Brew Minds application, so a single command deploys
+#   (or updates, or deletes) all of them together as one unit, in the
+#   correct order, instead of you running `kubectl apply -f` once per
+#   file by hand.
+#
+#   It also lets us rewrite the placeholder image names used in every
+#   deployment.yml (e.g. "brew-minds/frontend:latest") into the real
+#   ECR image URLs at deploy time, via the `images:` section below,
+#   without editing 13 separate files.
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Every resource that makes up this application. Order here doesn't
+# actually matter to Kubernetes/Kustomize (it resolves dependencies
+# like Namespace-before-Deployment automatically), but it's listed in
+# the logical order from the project brief for readability:
+# Namespace -> config/secrets -> backend -> frontend -> networking.
+resources:
+  - namespace.yml
+  - configmap.yml
+  - secrets.yml
+
+  # --- Backend services --------------------------------------------------
+  - backend/api-gateway/deployment.yml
+  - backend/api-gateway/service.yml
+  - backend/auth/deployment.yml
+  - backend/auth/service.yml
+  - backend/leads/deployment.yml
+  - backend/leads/service.yml
+  - backend/clients/deployment.yml
+  - backend/clients/service.yml
+  - backend/projects/deployment.yml
+  - backend/projects/service.yml
+  - backend/payments/deployment.yml
+  - backend/payments/service.yml
+  - backend/meetings/deployment.yml
+  - backend/meetings/service.yml
+  - backend/tasks/deployment.yml
+  - backend/tasks/service.yml
+  - backend/documents/pvc.yml # created BEFORE the Deployment that mounts it
+  - backend/documents/deployment.yml
+  - backend/documents/service.yml
+  - backend/invoices/deployment.yml
+  - backend/invoices/service.yml
+  - backend/notifications/deployment.yml
+  - backend/notifications/service.yml
+  - backend/dashboard/deployment.yml
+  - backend/dashboard/service.yml
+
+  # --- Frontend ------------------------------------------------------------
+  - frontend/deployment.yml
+  - frontend/service.yml
+
+  # --- External entry point -------------------------------------------------
+  - ingress.yml
+
+# Every label below is stamped onto every resource above automatically -
+# handy for querying everything that belongs to this app at once, e.g.
+#   kubectl get all -n brew-minds -l app.kubernetes.io/part-of=brew-minds
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: brew-minds
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
+
+# ---------------------------------------------------------------------------
+# IMAGE REWRITING
+# ---------------------------------------------------------------------------
+# Every deployment.yml above references a short, local placeholder image
+# name, e.g. "brew-minds/frontend:latest" - this section rewrites each
+# one into the REAL image URL in the ECR repository Terraform created
+# for it (see the Terraform `ecr` module - repository names match these
+# service names exactly: frontend, api-gateway, auth, leads, clients,
+# projects, payments, meetings, tasks, documents, invoices,
+# notifications, dashboard).
+#
+# ⚠ REPLACE THE PLACEHOLDERS BEFORE DEPLOYING:
+#   AWS_ACCOUNT_ID -> your real 12-digit AWS account ID
+#   AWS_REGION     -> the region Terraform deployed into (default: ap-south-1)
+#   ENVIRONMENT    -> matches Terraform's `environment` variable (default: dev)
+#   newTag         -> the real image tag you built/pushed (see note below)
+#
+# The quickest way to do this without hand-editing every line is:
+#   sed -i 's/AWS_ACCOUNT_ID/123456789012/g; s/AWS_REGION/ap-south-1/g' k8s/kustomization.yml
+#
+# On image tags: this project's Dockerfiles don't show evidence of a
+# CI/CD pipeline yet (out of scope here - no GitHub Actions were
+# requested), so there's no established Git-SHA/versioned tagging
+# scheme to preserve. "latest" is used below as a clearly-labelled
+# starting point; swap `newTag` for a real version/SHA once a build
+# pipeline exists - that's the ONE line each service needs to change.
+images:
+  - name: brew-minds/frontend
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-frontend
+    newTag: latest
+  - name: brew-minds/api-gateway
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-api-gateway
+    newTag: latest
+  - name: brew-minds/auth
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-auth
+    newTag: latest
+  - name: brew-minds/leads
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-leads
+    newTag: latest
+  - name: brew-minds/clients
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-clients
+    newTag: latest
+  - name: brew-minds/projects
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-projects
+    newTag: latest
+  - name: brew-minds/payments
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-payments
+    newTag: latest
+  - name: brew-minds/meetings
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-meetings
+    newTag: latest
+  - name: brew-minds/tasks
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-tasks
+    newTag: latest
+  - name: brew-minds/documents
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-documents
+    newTag: latest
+  - name: brew-minds/invoices
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-invoices
+    newTag: latest
+  - name: brew-minds/notifications
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-notifications
+    newTag: latest
+  - name: brew-minds/dashboard
+    newName: AWS_ACCOUNT_ID.dkr.ecr.AWS_REGION.amazonaws.com/brew-minds-ENVIRONMENT-dashboard
+    newTag: latest

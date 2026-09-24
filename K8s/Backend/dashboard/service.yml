@@ -1,0 +1,23 @@
+# =============================================================================
+# DASHBOARD SERVICE
+# =============================================================================
+# Gives the "dashboard" Pods a stable internal name/address so other
+# services can always reach them
+# even as individual Pods restart. See ../../frontend/service.yml for a
+# full explanation of what a Service is and why ClusterIP is used.
+#
+# type: ClusterIP -> internal-only. Only reachable from inside the cluster - exactly what we want for an
+# internal backend service (see "DO NOT USE PUBLIC IPs" in the project brief).
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: dashboard
+  namespace: brew-minds
+spec:
+  type: ClusterIP
+  selector:
+    app: dashboard
+  ports:
+    - port: 5011
+      targetPort: 5011

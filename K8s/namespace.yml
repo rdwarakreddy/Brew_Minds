@@ -1,0 +1,31 @@
+# =============================================================================
+# NAMESPACE
+# =============================================================================
+# What is a Namespace?
+#   A Namespace is like a labeled folder inside the Kubernetes cluster.
+#   It groups related resources (Deployments, Services, ConfigMaps, etc.)
+#   together and keeps them separate from anything else that might be
+#   running in the same cluster.
+#
+# Why are we using one?
+#   - Every Brew Minds resource (frontend, all 12 backend services,
+#     config, secrets, ingress) lives in ONE namespace called
+#     "brew-minds". This makes it trivial to see everything that
+#     belongs to this application with a single command:
+#       kubectl get all -n brew-minds
+#   - It also lets us delete the entire application cleanly (kubectl
+#     delete namespace brew-minds) without touching anything else that
+#     might later be deployed to the same EKS cluster.
+#   - Kubernetes Services in the same namespace can reach each other
+#     using just their short name (e.g. "auth"). Services in DIFFERENT
+#     namespaces would need the longer form "auth.brew-minds.svc.cluster.local".
+#     Keeping everything in one namespace keeps our service URLs short
+#     and simple, matching what the application code already expects
+#     (e.g. AUTH_SERVICE_URL=http://auth:5001).
+# =============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: brew-minds
+  labels:
+    app.kubernetes.io/part-of: brew-minds

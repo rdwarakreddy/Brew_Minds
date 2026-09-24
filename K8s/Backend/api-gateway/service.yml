@@ -1,0 +1,28 @@
+# =============================================================================
+# API-GATEWAY SERVICE
+# =============================================================================
+# Gives the "api-gateway" Pods a stable internal name/address so other
+# services can always reach them
+# even as individual Pods restart. See ../../frontend/service.yml for a
+# full explanation of what a Service is and why ClusterIP is used.
+#
+# type: ClusterIP -> internal-only, reachable only from inside the
+# cluster. External traffic never hits this Service directly: the ALB
+# (via ../../ingress.yml's TargetGroupBinding) forwards everything to
+# the frontend Service, and the frontend's own Nginx proxies "/api/*"
+# requests on to THIS Service using Kubernetes DNS - see the
+# architecture note at the top of ../../ingress.yml for the full
+# reasoning.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: brew-minds
+spec:
+  type: ClusterIP
+  selector:
+    app: api-gateway
+  ports:
+    - port: 5000
+      targetPort: 5000

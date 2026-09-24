@@ -1,0 +1,52 @@
+# =============================================================================
+# PERSISTENT VOLUME CLAIM - documents service uploaded files
+# =============================================================================
+# What is a PersistentVolumeClaim (PVC)?
+#   A "request" for a real, durable disk. Kubernetes hands it a piece of
+#   actual storage (here, an Amazon EBS volume, via the EBS CSI driver
+#   Terraform's EKS module already installed) and keeps that data safe
+#   even if the Pod using it restarts or is rescheduled elsewhere.
+#
+# WHY DOES THIS EXIST AT ALL?
+#   This file is an intentional departure from the plain
+#   Deployment+Service pattern used everywhere else, and it exists for
+#   one reason: the documentService application code saves uploaded
+#   files to LOCAL DISK using multer (see
+#   Backend/documentService/src/utils/upload.js), not to Amazon S3.
+#   There is no AWS SDK / S3 client anywhere in that service's code or
+#   package.json, even though Terraform already provisions an S3
+#   bucket for "documents" via the storage module.
+#
+#   Without a real volume, an uploaded file would live only inside the
+#   container's own temporary filesystem and be PERMANENTLY LOST the
+#   next time that Pod restarts (a routine, expected event in
+#   Kubernetes). This PVC is the minimum fix so the application, as it
+#   is actually written today, doesn't silently lose user data.
+#
+#   The proper long-term fix is on the APPLICATION side: switch
+#   documentService to upload to the Terraform-provisioned S3 bucket
+#   instead (e.g. using the AWS SDK's S3 client or a library like
+#   multer-s3). That's an application code change, which is explicitly
+#   out of scope for this Kubernetes-only task - flagging it here
+#   instead of silently masking it.
+#
+# accessModes: ReadWriteOnce means this volume can only be attached to
+#   ONE Pod at a time - which is exactly why backend/documents/deployment.yml
+#   is deliberately kept at 1 replica.
+# =============================================================================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: documents-uploads
+  namespace: brew-minds
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # Uses whatever StorageClass is marked default on the cluster. EKS
+  # clusters that have the EBS CSI add-on installed (this one does -
+  # see the Terraform eks module) ship a default "gp2"/"gp3"
+  # StorageClass out of the box, so nothing further needs to be
+  # created here.
+  resources:
+    requests:
+      storage: 5Gi
