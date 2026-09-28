@@ -1,0 +1,391 @@
+# =============================================================================
+# BREW MINDS - APPLICATION CI/CD
+# =============================================================================
+# What is this file?
+#   This is a "GitHub Actions workflow" - a set of instructions GitHub
+#   runs automatically on temporary, disposable virtual machines
+#   ("runners") whenever something happens in this repository (like a
+#   git push). This one builds the Brew Minds Docker images, pushes
+#   them to Amazon ECR, and deploys them to the Amazon EKS cluster.
+#
+# What this workflow does NOT do:
+#   It does NOT create any AWS infrastructure. The VPC, ECR
+#   repositories, EKS cluster, RDS database, S3 bucket, etc. are all
+#   created separately by running Terraform BY HAND, before this
+#   workflow is ever used (see docs/CICD.md, "First-Time Setup"). This
+#   workflow only BUILDS and DEPLOYS the application onto infrastructure
+#   that already exists. If you're looking for Terraform automation,
+#   it deliberately isn't here - see docs/CICD.md, section 2.
+# =============================================================================
+
+name: Brew Minds - Application CI/CD
+
+# ---------------------------------------------------------------------------
+# WHEN DOES THIS WORKFLOW RUN?
+# ---------------------------------------------------------------------------
+on:
+  # A push to "main" is treated as "this code is ready to go live" -
+  # main is GitHub's modern default branch name, and nothing in this
+  # repository suggests a different convention is used, so it's used
+  # here as the deployment trigger. If your repository actually uses a
+  # different default branch (e.g. "master"), change it below.
+  push:
+    branches:
+      - main
+
+  # A Pull Request targeting "main" runs the VALIDATION steps only
+  # (checkout + Docker build check) so a reviewer can see broken code
+  # BEFORE it's merged - but it never pushes images or touches the
+  # real EKS cluster. See the `validate` job below, and docs/CICD.md's
+  # "Validation vs Deployment" section for why this split matters.
+  pull_request:
+    branches:
+      - main
+
+  # Lets you manually re-run a deployment from the GitHub UI (Actions
+  # tab -> this workflow -> "Run workflow") without needing to make an
+  # empty commit - handy after fixing a Kubernetes Secret value by
+  # hand, for example.
+  workflow_dispatch: {}
+
+# ---------------------------------------------------------------------------
+# PERMISSIONS
+# ---------------------------------------------------------------------------
+# By default, a GitHub Actions job gets no special permissions. This
+# workflow needs exactly one: "id-token: write" lets the job request a
+# short-lived OIDC identity token from GitHub, which is what proves to
+# AWS "this really is a run of the trusted repository/workflow" (see
+# the AWS_AUTH comments further down, and docs/CICD.md section 3 for
+# the full OIDC explanation). "contents: read" is just the default
+# permission needed to check out the repository's code.
+permissions:
+  id-token: write
+  contents: read
+
+# ---------------------------------------------------------------------------
+# SHARED VALUES
+# ---------------------------------------------------------------------------
+# GitHub "Variables" (Settings -> Secrets and variables -> Actions ->
+# Variables tab) hold configuration that is NOT sensitive - an AWS
+# region or a cluster name isn't a secret, so there's no need to hide
+# it, and keeping it as a Variable (rather than baking it into the
+# YAML) means changing environments later doesn't require editing this
+# file. See docs/CICD.md section 4 for the full list and exactly what
+# to configure.
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}               # e.g. ap-south-1 - must match Terraform's aws_region
+  EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}   # e.g. brew-minds-eks - must match Terraform's eks_cluster_name
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}         # brew-minds - must match k8s/namespace.yml
+  ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+  ECR_REPO_PREFIX: brew-minds-${{ vars.ENVIRONMENT }} # e.g. brew-minds-dev - must match Terraform's project_name-environment
+
+jobs:
+  # ===========================================================================
+  # JOB 1: VALIDATE
+  # ===========================================================================
+  # Runs on EVERY push and EVERY Pull Request. This is the
+  # "does the code actually build?" check. It needs NO AWS credentials
+  # at all - it only builds Docker images locally on the runner to make
+  # sure every Dockerfile still works, and renders the Kubernetes
+  # manifests to catch YAML/Kustomize mistakes early. Nothing here is
+  # pushed anywhere or deployed anywhere.
+  #
+  # WHY A MATRIX INSTEAD OF 13 COPY-PASTED STEPS?
+  #   Brew Minds has 13 services (1 frontend + 12 backend) that all
+  #   need the exact same 3 actions done to them: checkout, then
+  #   "docker build" their own folder. Writing that block out 13 times
+  #   would make this file 5x longer and much HARDER to read, not
+  #   easier - if you fixed a typo in one, you'd have to remember to
+  #   fix it in all 13. A "matrix" runs the SAME steps once per entry
+  #   in a list, in parallel, so the workflow file only has to describe
+  #   the steps ONCE.
+  # ===========================================================================
+  validate:
+    name: Validate (build check)
+    runs-on: ubuntu-latest
+    strategy:
+      # If one service's Docker build fails, let the OTHER 12 keep
+      # running instead of cancelling them - you get one complete
+      # report of everything that's broken, not just the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - service: frontend
+            context: Frontend
+          - service: api-gateway
+            context: Backend/apiGateway
+          - service: auth
+            context: Backend/authService
+          - service: leads
+            context: Backend/leadService
+          - service: clients
+            context: Backend/clientService
+          - service: projects
+            context: Backend/projectService
+          - service: payments
+            context: Backend/paymentService
+          - service: meetings
+            context: Backend/meetingService
+          - service: tasks
+            context: Backend/taskService
+          - service: documents
+            context: Backend/documentService
+          - service: invoices
+            context: Backend/invoiceService
+          - service: notifications
+            context: Backend/notificationService
+          - service: dashboard
+            context: Backend/dashboardService
+    steps:
+      # GitHub Actions starts with a fresh, empty temporary machine
+      # every single run. This step downloads ("checks out") this
+      # repository's code onto it, so later steps can actually see the
+      # Dockerfiles and source code.
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Builds the Docker image but does NOT push it anywhere. This is
+      # purely "does this Dockerfile still produce a working image?".
+      # -f points at the actual Dockerfile - note it's lowercase
+      # "dockerfile" in this project (Backend/*/dockerfile,
+      # Frontend/dockerfile), not the more common capitalised
+      # "Dockerfile", so it must be given explicitly rather than
+      # relying on Docker's default auto-detection.
+      - name: Build ${{ matrix.service }} image (validation only, not pushed)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/dockerfile
+          push: false
+
+  # ===========================================================================
+  # JOB 2: BUILD AND PUSH TO ECR
+  # ===========================================================================
+  # Only runs on a push to "main" (never on a Pull Request - see the
+  # `if:` line below), and only after `validate` has already passed for
+  # every service. This is where images actually get uploaded to AWS.
+  # ===========================================================================
+  build-and-push:
+    name: Build & push ${{ matrix.service }}
+    needs: validate
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: frontend
+            context: Frontend
+          - service: api-gateway
+            context: Backend/apiGateway
+          - service: auth
+            context: Backend/authService
+          - service: leads
+            context: Backend/leadService
+          - service: clients
+            context: Backend/clientService
+          - service: projects
+            context: Backend/projectService
+          - service: payments
+            context: Backend/paymentService
+          - service: meetings
+            context: Backend/meetingService
+          - service: tasks
+            context: Backend/taskService
+          - service: documents
+            context: Backend/documentService
+          - service: invoices
+            context: Backend/invoiceService
+          - service: notifications
+            context: Backend/notificationService
+          - service: dashboard
+            context: Backend/dashboardService
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- AWS AUTHENTICATION (OIDC) --------------------------------------
+      # GitHub OIDC lets this workflow PROVE to AWS that it really is a
+      # run of THIS exact GitHub repository, without ever storing a
+      # permanent AWS password/access key anywhere. Here's the simple
+      # version of how it works:
+      #   1. GitHub hands this job a short-lived, signed identity token
+      #      ("who I am": this repo, this branch, this workflow).
+      #   2. This step sends that token to AWS and asks to assume the
+      #      IAM role named in AWS_OIDC_ROLE_ARN.
+      #   3. AWS checks the role's "trust policy" (configured once,
+      #      outside this workflow - see docs/CICD.md section 5) to
+      #      confirm the token really came from this specific repo.
+      #   4. If it matches, AWS hands back TEMPORARY credentials
+      #      (they expire automatically) that the rest of this job uses
+      #      to talk to ECR.
+      # This is safer than a stored AWS access key because there is
+      # nothing permanent to leak, steal, or forget to rotate.
+      - name: Authenticate to AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Logs the local `docker` command in to Amazon ECR (Elastic
+      # Container Registry - AWS's private storage for Docker images)
+      # using the temporary credentials from the step above.
+      - name: Log in to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --- BUILD, TAG, PUSH -------------------------------------------------
+      # Builds the image, then tags and pushes it to the ECR repository
+      # Terraform already created for this exact service (see the
+      # Terraform `ecr` module - repository names are
+      # "brew-minds-<environment>-<service>", matching ECR_REPO_PREFIX
+      # above). Two tags are pushed:
+      #   - ${{ github.sha }}  -> the full Git commit SHA. THIS is the
+      #     tag Kubernetes actually deploys (see the `deploy` job).
+      #     Every image is permanently, unambiguously traceable back to
+      #     the exact source code that produced it, and rolling back
+      #     is just "redeploy the previous commit's image" - see
+      #     docs/CICD.md section 9.
+      #   - latest -> a convenience pointer to "whatever was most
+      #     recently built", useful for a human poking around in the
+      #     ECR console or pulling the image locally to inspect it.
+      #     Kubernetes never uses this tag directly - if it did,
+      #     "which version is actually running?" would become
+      #     unanswerable, and a rollout could silently redeploy a newer
+      #     image than intended.
+      - name: Build, tag, and push ${{ matrix.service }} image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO_PREFIX }}-${{ matrix.service }}:latest
+
+  # ===========================================================================
+  # JOB 3: DEPLOY TO EKS
+  # ===========================================================================
+  # Runs once (not matrixed - it operates on the single shared k8s/
+  # folder), only on a push to "main", and only after EVERY service has
+  # finished building and pushing successfully.
+  # ===========================================================================
+  deploy:
+    name: Deploy to EKS
+    needs: build-and-push
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Prevents two deployments from running at the same time and
+    # fighting over the same cluster if two pushes land close together -
+    # the second one waits for the first to finish instead of racing it.
+    concurrency:
+      group: brew-minds-eks-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to AWS via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_OIDC_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # --- CONNECT kubectl TO THE EXISTING EKS CLUSTER ------------------------
+      # "EKS" (Elastic Kubernetes Service) is AWS's managed Kubernetes -
+      # Terraform already created the actual cluster (see the Terraform
+      # `eks` module); this step does NOT create anything, it just
+      # writes cluster connection details (API address + a short-lived
+      # auth token, generated using the OIDC credentials from the step
+      # above) into a local kubeconfig file so `kubectl` knows where to
+      # send its commands. This is what "configure EKS access" means.
+      - name: Configure kubectl for the existing EKS cluster
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ env.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
+
+      # Kustomize is a tool built into kubectl (`kubectl apply -k`) for
+      # combining multiple Kubernetes YAML files and rewriting values
+      # like image names across all of them at once - see k8s/kustomization.yml
+      # for the full explanation. The CLI version (with an `edit`
+      # command, used just below) isn't bundled with kubectl, so it's
+      # installed here as its own small binary, downloaded directly
+      # from its official GitHub Releases and pinned to a specific
+      # version so this workflow behaves the same way every time it
+      # runs, instead of silently changing behaviour if a new version
+      # is released.
+      - name: Install kustomize
+        run: |
+          curl -sL -o kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.5.0/kustomize_v5.5.0_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz
+          chmod +x kustomize
+          sudo mv kustomize /usr/local/bin/kustomize
+          kustomize version
+
+      # --- POINT EACH DEPLOYMENT AT THE IMAGE JUST BUILT ------------------------
+      # Every deployment.yml in k8s/ references a short PLACEHOLDER
+      # image name (e.g. "brew-minds/frontend:latest") - see
+      # k8s/kustomization.yml's own comments for why. This step rewrites
+      # every one of those placeholders, in one shot, to point at the
+      # REAL image this exact workflow run just pushed to ECR, tagged
+      # with this exact commit's Git SHA - never "latest".
+      - name: Point Kubernetes manifests at this commit's images
+        run: |
+          cd k8s
+          for service in frontend api-gateway auth leads clients projects payments meetings tasks documents invoices notifications dashboard; do
+            kustomize edit set image \
+              "brew-minds/${service}=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO_PREFIX }}-${service}:${{ github.sha }}"
+          done
+
+      # --- APPLY --------------------------------------------------------------
+      # Sends every Kubernetes resource kustomize builds (Namespace,
+      # ConfigMap, all 13 Deployments/Services, the documents PVC, the
+      # ALB TargetGroupBinding - see k8s/kustomization.yml's `resources:`
+      # list) to the cluster. Kubernetes compares this against what's
+      # already running and only changes what's different - existing
+      # Pods that don't need to change are left alone.
+      #
+      # NOTE: k8s/secrets.yml is deliberately EXCLUDED from
+      # kustomization.yml's resources (see the comment there) precisely
+      # so this step can never overwrite real secrets in the cluster
+      # with the placeholder values that live in that file. Secrets are
+      # applied once, by hand - see docs/CICD.md, "Configuration and
+      # Secrets".
+      - name: Apply Kubernetes manifests
+        run: kubectl apply -k k8s/
+
+      # --- WAIT FOR THE ROLLOUT TO ACTUALLY FINISH -----------------------------
+      # `kubectl apply` only confirms Kubernetes ACCEPTED the new
+      # configuration - it does NOT wait to see whether the new Pods
+      # actually start up successfully. `kubectl rollout status` blocks
+      # until every new Pod is healthy (or a timeout is hit), for every
+      # single Deployment. If a container crashes on startup or an
+      # image can't be pulled, this step fails LOUDLY here instead of
+      # the workflow reporting a false "success" while the application
+      # is actually broken.
+      - name: Wait for every Deployment to finish rolling out
+        run: |
+          for deployment in frontend api-gateway auth leads clients projects payments meetings tasks documents invoices notifications dashboard; do
+            echo "Waiting for deployment/${deployment} to roll out..."
+            kubectl rollout status "deployment/${deployment}" \
+              --namespace "${{ env.K8S_NAMESPACE }}" \
+              --timeout=180s
+          done
+
+      # --- FINAL VERIFICATION --------------------------------------------------
+      # A last, human-readable confirmation printed into the workflow
+      # log: every Pod, and which image tag it's actually running. If
+      # rollout status above already passed, this step is expected to
+      # show every Pod as "Running" and "1/1" (or similar) ready.
+      - name: Verify Pods are running
+        run: |
+          echo "--- Pods in namespace ${{ env.K8S_NAMESPACE }} ---"
+          kubectl get pods --namespace "${{ env.K8S_NAMESPACE }}" -o wide
+
+          echo ""
+          echo "--- Deployments ---"
+          kubectl get deployments --namespace "${{ env.K8S_NAMESPACE }}"
+
+          echo ""
+          echo "Deployed commit: ${{ github.sha }}"
