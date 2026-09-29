@@ -75,7 +75,7 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}               # e.g. ap-south-1 - must match Terraform's aws_region
   EKS_CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}   # e.g. brew-minds-eks - must match Terraform's eks_cluster_name
-  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}         # brew-minds - must match k8s/namespace.yml
+  K8S_NAMESPACE: ${{ vars.K8S_NAMESPACE }}         # brew-minds - must match K8s/namespace.yml
   ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
   ECR_REPO_PREFIX: brew-minds-${{ vars.ENVIRONMENT }} # e.g. brew-minds-dev - must match Terraform's project_name-environment
 
@@ -238,20 +238,28 @@ jobs:
       # Terraform already created for this exact service (see the
       # Terraform `ecr` module - repository names are
       # "brew-minds-<environment>-<service>", matching ECR_REPO_PREFIX
-      # above). Two tags are pushed:
-      #   - ${{ github.sha }}  -> the full Git commit SHA. THIS is the
-      #     tag Kubernetes actually deploys (see the `deploy` job).
-      #     Every image is permanently, unambiguously traceable back to
-      #     the exact source code that produced it, and rolling back
-      #     is just "redeploy the previous commit's image" - see
-      #     docs/CICD.md section 9.
-      #   - latest -> a convenience pointer to "whatever was most
-      #     recently built", useful for a human poking around in the
-      #     ECR console or pulling the image locally to inspect it.
-      #     Kubernetes never uses this tag directly - if it did,
-      #     "which version is actually running?" would become
-      #     unanswerable, and a rollout could silently redeploy a newer
-      #     image than intended.
+      # above).
+      #
+      # Only ONE tag is pushed: ${{ github.sha }}, the full Git commit
+      # SHA. THIS is the tag Kubernetes actually deploys (see the
+      # `deploy` job). Every image is permanently, unambiguously
+      # traceable back to the exact source code that produced it, and
+      # rolling back is just "redeploy the previous commit's image".
+      #
+      # ⚠ AUDIT FIX: this used to also push a floating "latest" tag
+      # alongside the SHA tag. That's incompatible with the Terraform
+      # `ecr` module's image_tag_mutability = "IMMUTABLE" setting (see
+      # Terraform/modules/ECR/variables.tf): an IMMUTABLE repository
+      # permanently REJECTS re-pushing any tag that already exists, and
+      # "latest" by definition gets pushed again on every single build.
+      # The first build would succeed; every build after that would
+      # fail on this exact step with ImageTagAlreadyExistsException.
+      # Since Kubernetes never deploys the "latest" tag anyway (see the
+      # comment above), the fix is simply to stop pushing it, rather
+      # than weakening ECR's immutability (a real security control that
+      # prevents an attacker - or a mistake - from silently swapping out
+      # an already-deployed image tag). To inspect a specific build's
+      # image by hand, use its commit SHA tag or browse the ECR console.
       - name: Build, tag, and push ${{ matrix.service }} image
         uses: docker/build-push-action@v6
         with:
@@ -260,12 +268,11 @@ jobs:
           push: true
           tags: |
             ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO_PREFIX }}-${{ matrix.service }}:${{ github.sha }}
-            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO_PREFIX }}-${{ matrix.service }}:latest
 
   # ===========================================================================
   # JOB 3: DEPLOY TO EKS
   # ===========================================================================
-  # Runs once (not matrixed - it operates on the single shared k8s/
+  # Runs once (not matrixed - it operates on the single shared K8s/
   # folder), only on a push to "main", and only after EVERY service has
   # finished building and pushing successfully.
   # ===========================================================================
@@ -306,7 +313,7 @@ jobs:
 
       # Kustomize is a tool built into kubectl (`kubectl apply -k`) for
       # combining multiple Kubernetes YAML files and rewriting values
-      # like image names across all of them at once - see k8s/kustomization.yml
+      # like image names across all of them at once - see K8s/kustomization.yml
       # for the full explanation. The CLI version (with an `edit`
       # command, used just below) isn't bundled with kubectl, so it's
       # installed here as its own small binary, downloaded directly
@@ -324,15 +331,15 @@ jobs:
           kustomize version
 
       # --- POINT EACH DEPLOYMENT AT THE IMAGE JUST BUILT ------------------------
-      # Every deployment.yml in k8s/ references a short PLACEHOLDER
+      # Every deployment.yml in K8s/ references a short PLACEHOLDER
       # image name (e.g. "brew-minds/frontend:latest") - see
-      # k8s/kustomization.yml's own comments for why. This step rewrites
+      # K8s/kustomization.yml's own comments for why. This step rewrites
       # every one of those placeholders, in one shot, to point at the
       # REAL image this exact workflow run just pushed to ECR, tagged
       # with this exact commit's Git SHA - never "latest".
       - name: Point Kubernetes manifests at this commit's images
         run: |
-          cd k8s
+          cd K8s
           for service in frontend api-gateway auth leads clients projects payments meetings tasks documents invoices notifications dashboard; do
             kustomize edit set image \
               "brew-minds/${service}=${{ env.ECR_REGISTRY }}/${{ env.ECR_REPO_PREFIX }}-${service}:${{ github.sha }}"
@@ -341,19 +348,19 @@ jobs:
       # --- APPLY --------------------------------------------------------------
       # Sends every Kubernetes resource kustomize builds (Namespace,
       # ConfigMap, all 13 Deployments/Services, the documents PVC, the
-      # ALB TargetGroupBinding - see k8s/kustomization.yml's `resources:`
+      # ALB TargetGroupBinding - see K8s/kustomization.yml's `resources:`
       # list) to the cluster. Kubernetes compares this against what's
       # already running and only changes what's different - existing
       # Pods that don't need to change are left alone.
       #
-      # NOTE: k8s/secrets.yml is deliberately EXCLUDED from
+      # NOTE: K8s/secrets.yml is deliberately EXCLUDED from
       # kustomization.yml's resources (see the comment there) precisely
       # so this step can never overwrite real secrets in the cluster
       # with the placeholder values that live in that file. Secrets are
       # applied once, by hand - see docs/CICD.md, "Configuration and
       # Secrets".
       - name: Apply Kubernetes manifests
-        run: kubectl apply -k k8s/
+        run: kubectl apply -k K8s/
 
       # --- WAIT FOR THE ROLLOUT TO ACTUALLY FINISH -----------------------------
       # `kubectl apply` only confirms Kubernetes ACCEPTED the new
