@@ -28,35 +28,35 @@ resources:
   - secrets.yml
 
   # --- Backend services --------------------------------------------------
-  - backend/api-gateway/deployment.yml
-  - backend/api-gateway/service.yml
-  - backend/auth/deployment.yml
-  - backend/auth/service.yml
-  - backend/leads/deployment.yml
-  - backend/leads/service.yml
-  - backend/clients/deployment.yml
-  - backend/clients/service.yml
-  - backend/projects/deployment.yml
-  - backend/projects/service.yml
-  - backend/payments/deployment.yml
-  - backend/payments/service.yml
-  - backend/meetings/deployment.yml
-  - backend/meetings/service.yml
-  - backend/tasks/deployment.yml
-  - backend/tasks/service.yml
-  - backend/documents/pvc.yml # created BEFORE the Deployment that mounts it
-  - backend/documents/deployment.yml
-  - backend/documents/service.yml
-  - backend/invoices/deployment.yml
-  - backend/invoices/service.yml
-  - backend/notifications/deployment.yml
-  - backend/notifications/service.yml
-  - backend/dashboard/deployment.yml
-  - backend/dashboard/service.yml
+  - Backend/api-gateway/deployment.yml
+  - Backend/api-gateway/service.yml
+  - Backend/auth/deployment.yml
+  - Backend/auth/service.yml
+  - Backend/leads/deployment.yml
+  - Backend/leads/service.yml
+  - Backend/clients/deployment.yml
+  - Backend/clients/service.yml
+  - Backend/projects/deployment.yml
+  - Backend/projects/service.yml
+  - Backend/payments/deployment.yml
+  - Backend/payments/service.yml
+  - Backend/meetings/deployment.yml
+  - Backend/meetings/service.yml
+  - Backend/tasks/deployment.yml
+  - Backend/tasks/service.yml
+  - Backend/documents/pvc.yml # created BEFORE the Deployment that mounts it
+  - Backend/documents/deployment.yml
+  - Backend/documents/service.yml
+  - Backend/invoices/deployment.yml
+  - Backend/invoices/service.yml
+  - Backend/notifications/deployment.yml
+  - Backend/notifications/service.yml
+  - Backend/dashboard/deployment.yml
+  - Backend/dashboard/service.yml
 
   # --- Frontend ------------------------------------------------------------
-  - frontend/deployment.yml
-  - frontend/service.yml
+  - Frontend/deployment.yml
+  - Frontend/service.yml
 
   # --- External entry point -------------------------------------------------
   - ingress.yml
