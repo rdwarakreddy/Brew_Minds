@@ -82,6 +82,22 @@ resource "aws_eks_cluster" "main" {
     endpoint_private_access = var.endpoint_private_access
   }
 
+  # ⚠ AUDIT ADDITION: "access_config" turns on EKS Access Entries - the
+  # modern, IAM-native way to grant an AWS identity (like the new
+  # GitHub Actions role in the cicd module) permission to run kubectl
+  # commands against this cluster, scoped down to a specific namespace
+  # if desired, instead of everyone needing cluster-admin via the older
+  # aws-auth ConfigMap. API_AND_CONFIG_MAP keeps the legacy ConfigMap
+  # path working too (nothing existing breaks), it just also turns the
+  # newer Access Entries API on. bootstrap_cluster_creator_admin_permissions
+  # = true preserves today's behavior: whichever IAM identity actually
+  # runs `terraform apply` keeps full admin access to the cluster, so
+  # your existing AWS CLI / IAM Identity Center login is not locked out.
+  access_config {
+    authentication_mode                         = "API_AND_CONFIG_MAP"
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
   # Turns on useful control-plane logs (who did what, scheduling
   # decisions, authentication attempts) so problems are easier to debug.
   enabled_cluster_log_types = ["api", "audit", "authenticator"]

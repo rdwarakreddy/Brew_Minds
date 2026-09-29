@@ -389,8 +389,8 @@ resource "aws_network_acl" "private" {
     rule_no    = 110
     action     = "allow"
     cidr_block = "0.0.0.0/0"
-    from_port  = 1024
-    to_port    = 65535
+    from_port  = 0
+    to_port    = 0
   }
 
   # Allow all outbound traffic (nodes need to reach NAT, ECR, RDS, etc.)

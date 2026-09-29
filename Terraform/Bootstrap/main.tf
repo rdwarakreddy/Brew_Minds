@@ -57,8 +57,8 @@ variable "state_bucket_name" {
 # THE STATE BUCKET
 # -----------------------------------------------------------------------
 resource "aws_s3_bucket" "terraform_state" {
-  bucket = var.state_bucket_name
-
+  bucket        = var.state_bucket_name
+  force_destroy = true
   # Prevents someone from accidentally deleting this bucket with
   # `terraform destroy` while it's actively holding real state
   # lifecycle {

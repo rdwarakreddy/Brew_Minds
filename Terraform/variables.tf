@@ -151,7 +151,15 @@ variable "s3_bucket_name" {
 # --- Secrets ---
 
 variable "jwt_secret" {
-  description = "Secret key used by the Auth Service to sign JWT tokens. Provide via tfvars/environment variable, never hard-code."
+  description = "Secret key used by the Auth Service to sign ACCESS JWT tokens. Provide via tfvars/environment variable, never hard-code."
+  type        = string
+  sensitive   = true
+}
+
+# ⚠ AUDIT FIX: added alongside jwt_secret - see Terraform/modules/Secrets/variables.tf
+# for why the application needs two separate JWT secrets.
+variable "jwt_refresh_secret" {
+  description = "Secret key used by the Auth Service to sign REFRESH JWT tokens (must be different from jwt_secret). Provide via tfvars/environment variable, never hard-code."
   type        = string
   sensitive   = true
 }
@@ -168,4 +176,29 @@ variable "google_oauth_client_secret" {
   type        = string
   default     = ""
   sensitive   = true
+}
+
+# --- CICD (GitHub Actions OIDC) ---
+# ⚠ AUDIT ADDITION: required by the new modules/CICD module.
+
+variable "github_org" {
+  description = "Your GitHub username or organization name, e.g. the \"X\" in github.com/X/Brew_Minds. Required so the GitHub Actions IAM role trust policy only trusts YOUR repository, not anyone else's. Set this in terraform.tfvars."
+  type        = string
+}
+
+variable "github_repo" {
+  description = "Name of the GitHub repository this Terraform config belongs to"
+  type        = string
+  default     = "Brew_Minds"
+}
+
+variable "k8s_namespace" {
+  description = "Kubernetes namespace the application is deployed into (must match K8s/namespace.yml) - the GitHub Actions IAM role is only granted Edit access inside this one namespace, not the whole cluster"
+  type        = string
+  default     = "brew-minds"
+}
+variable "enable_cloudfront" {
+  description = "Whether to create the CloudFront distribution"
+  type        = bool
+  default     = false
 }

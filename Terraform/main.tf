@@ -10,6 +10,7 @@
 #   VPC  -->  EKS, RDS, Edge/Security   (all three need the network first)
 #   RDS  -->  Secrets                    (secret needs the real DB endpoint)
 #   EKS  -->  Edge/Security              (ALB tagging references the cluster)
+#   ECR, EKS  -->  CICD                  (GitHub Actions role needs real repo/cluster ARNs)
 #
 # We rely on Terraform automatically detecting these dependencies through
 # the module.xxx.output references below - no manual depends_on needed.
@@ -27,7 +28,17 @@ locals {
 # 1. VPC - the network everything else lives inside
 # =========================================================================
 module "vpc" {
-  source = "./modules/vpc"
+  # ⚠ AUDIT FIX: was "./modules/vpc". The actual directory on disk is
+  # "modules/VPC" (capital letters) - same for every module below
+  # except Edge_Security and CICD. On macOS/Windows this silently
+  # worked anyway because their filesystems are case-INSENSITIVE
+  # (this is almost certainly why `terraform init`/`plan` succeeded
+  # for you locally); Linux filesystems - including every GitHub
+  # Actions runner and most real deployment environments - are
+  # case-SENSITIVE, so `terraform init` would have failed there with
+  # "module not found". Fixed to match the real, on-disk casing for
+  # every module.
+  source = "./modules/VPC"
 
   project_name         = var.project_name
   environment          = var.environment
@@ -44,7 +55,7 @@ module "vpc" {
 #    Independent of the network, so it can be created in parallel.
 # =========================================================================
 module "ecr" {
-  source = "./modules/ecr"
+  source = "./modules/ECR"
 
   project_name = var.project_name
   environment  = var.environment
@@ -56,7 +67,7 @@ module "ecr" {
 #    Needs the VPC's private/public subnets and node security group.
 # =========================================================================
 module "eks" {
-  source = "./modules/eks"
+  source = "./modules/EKS"
 
   project_name           = var.project_name
   environment            = var.environment
@@ -78,7 +89,7 @@ module "eks" {
 #    Needs the VPC's private subnets and database security group.
 # =========================================================================
 module "database" {
-  source = "./modules/database"
+  source = "./modules/Database"
 
   project_name          = var.project_name
   environment           = var.environment
@@ -100,7 +111,7 @@ module "database" {
 #    Independent of the network, so it can be created in parallel.
 # =========================================================================
 module "storage" {
-  source = "./modules/storage"
+  source = "./modules/Storage"
 
   project_name = var.project_name
   environment  = var.environment
@@ -115,7 +126,7 @@ module "storage" {
 #    usable by the application once created.
 # =========================================================================
 module "secrets" {
-  source = "./modules/secrets"
+  source = "./modules/Secrets"
 
   project_name               = var.project_name
   environment                = var.environment
@@ -125,6 +136,7 @@ module "secrets" {
   db_host                    = module.database.rds_address
   db_port                    = module.database.rds_port
   jwt_secret                 = var.jwt_secret
+  jwt_refresh_secret         = var.jwt_refresh_secret
   google_oauth_client_id     = var.google_oauth_client_id
   google_oauth_client_secret = var.google_oauth_client_secret
   tags                       = local.common_tags
@@ -151,4 +163,27 @@ module "edge_security" {
   alb_security_group_id = module.vpc.alb_security_group_id
   eks_cluster_name      = module.eks.cluster_name
   tags                  = local.common_tags
+}
+
+# =========================================================================
+# 8. CICD - GitHub Actions OIDC role + EKS access entry
+#    ⚠ AUDIT ADDITION (see Terraform/modules/CICD/main.tf for the full
+#    explanation). Needs the real ECR repository ARNs (to scope the
+#    push/pull policy down to only this project's repos) and the real
+#    EKS cluster name/ARN (to grant kubectl access to only this
+#    cluster's brew-minds namespace) - so it runs last, after both
+#    already exist.
+# =========================================================================
+module "cicd" {
+  source = "./modules/CICD"
+
+  project_name        = var.project_name
+  environment         = var.environment
+  github_org          = var.github_org
+  github_repo         = var.github_repo
+  ecr_repository_arns = values(module.ecr.repository_arns)
+  eks_cluster_name    = module.eks.cluster_name
+  eks_cluster_arn     = module.eks.cluster_arn
+  k8s_namespace       = var.k8s_namespace
+  tags                = local.common_tags
 }

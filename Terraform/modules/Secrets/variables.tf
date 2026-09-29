@@ -42,7 +42,22 @@ variable "db_port" {
 }
 
 variable "jwt_secret" {
-  description = "Secret key used by the Auth Service to sign and verify JWT tokens"
+  description = "Secret key used by the Auth Service to sign and verify ACCESS tokens"
+  type        = string
+  sensitive   = true
+}
+
+# ⚠ AUDIT FIX: added. authService/src/utils/tokens.js signs access
+# tokens and refresh tokens with two DELIBERATELY SEPARATE secrets
+# (JWT_ACCESS_SECRET / JWT_REFRESH_SECRET), and K8s/secrets.yml already
+# expects a jwt_refresh_secret value here - but this module previously
+# only stored jwt_access_secret, so there was nowhere secure for the
+# refresh secret to live. Kept as its own variable (not reusing
+# jwt_secret) to preserve that intended access/refresh separation:
+# reusing one secret for both would mean a leaked access-token secret
+# could also be used to forge long-lived refresh tokens.
+variable "jwt_refresh_secret" {
+  description = "Secret key used by the Auth Service to sign and verify REFRESH tokens (deliberately separate from jwt_secret)"
   type        = string
   sensitive   = true
 }

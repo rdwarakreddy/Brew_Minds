@@ -65,6 +65,11 @@ resource "aws_secretsmanager_secret_version" "jwt_secret" {
   secret_id = aws_secretsmanager_secret.jwt_secret.id
   secret_string = jsonencode({
     jwt_access_secret = var.jwt_secret
+    # ⚠ AUDIT FIX: added jwt_refresh_secret so this secret's shape
+    # matches what K8s/secrets.yml already expects and what
+    # authService/src/utils/tokens.js actually requires (see the
+    # jwt_refresh_secret variable comment in variables.tf).
+    jwt_refresh_secret = var.jwt_refresh_secret
   })
 }
 

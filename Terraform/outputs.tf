@@ -82,3 +82,11 @@ output "cloudfront_domain_name" {
   description = "Public CloudFront domain name - this is the main URL to access Brew Minds"
   value       = module.edge_security.cloudfront_domain_name
 }
+
+# --- CICD (GitHub Actions OIDC) ---
+# ⚠ AUDIT ADDITION
+
+output "github_actions_role_arn" {
+  description = "ARN of the IAM role GitHub Actions assumes via OIDC. Copy this into the GitHub repository VARIABLE named AWS_OIDC_ROLE_ARN (Settings -> Secrets and variables -> Actions -> Variables). Not a secret - it's just an identifier, the security comes from GitHub's signed token plus this role's trust policy."
+  value       = module.cicd.github_actions_role_arn
+}
